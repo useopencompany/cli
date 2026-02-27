@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"encoding/base64"
 	"context"
 	"encoding/json"
 	"errors"
@@ -110,7 +111,7 @@ func DeviceFlow(ctx context.Context, clientID string) (*Token, error) {
 		return &Token{
 			AccessToken:  tokenResp.AccessToken,
 			RefreshToken: tokenResp.RefreshToken,
-			ExpiresAt:    time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second),
+			ExpiresAt:    expiresAtFromJWT(tokenResp.AccessToken, tokenResp.ExpiresIn),
 		}, nil
 	}
 }
@@ -141,7 +142,7 @@ func RefreshAccessToken(clientID, refreshToken string) (*Token, error) {
 
 	newToken := &Token{
 		AccessToken: result.AccessToken,
-		ExpiresAt:   time.Now().Add(time.Duration(result.ExpiresIn) * time.Second),
+		ExpiresAt:   expiresAtFromJWT(result.AccessToken, result.ExpiresIn),
 	}
 	// Use new refresh token if rotated, otherwise keep the old one.
 	if result.RefreshToken != "" {
@@ -218,6 +219,24 @@ func pollToken(ctx context.Context, clientID, deviceCode string) (*TokenResponse
 	}
 
 	return &result, nil
+}
+
+func expiresAtFromJWT(accessToken string, expiresIn int) time.Time {
+	parts := strings.Split(accessToken, ".")
+	if len(parts) == 3 {
+		if payload, err := base64.RawURLEncoding.DecodeString(parts[1]); err == nil {
+			var claims struct {
+				Exp int64 `json:"exp"`
+			}
+			if json.Unmarshal(payload, &claims) == nil && claims.Exp > 0 {
+				return time.Unix(claims.Exp, 0)
+			}
+		}
+	}
+	if expiresIn > 0 {
+		return time.Now().Add(time.Duration(expiresIn) * time.Second)
+	}
+	return time.Now().Add(5 * time.Minute)
 }
 
 func openBrowser(url string) error {
