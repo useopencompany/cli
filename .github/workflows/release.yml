@@ -2,8 +2,7 @@ name: Release
 
 on:
   push:
-    tags:
-      - "v*"
+    branches: [main]
 
 permissions:
   contents: write
@@ -13,22 +12,39 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache-dependency-path: go.sum
 
+      - name: Determine next version
+        id: version
+        run: |
+          LATEST=$(git tag -l 'v*' --sort=-v:refname | head -1)
+          if [ -z "$LATEST" ]; then
+            NEXT="v0.1.0"
+          else
+            MAJOR=$(echo "$LATEST" | sed 's/v//' | cut -d. -f1)
+            MINOR=$(echo "$LATEST" | sed 's/v//' | cut -d. -f2)
+            PATCH=$(echo "$LATEST" | sed 's/v//' | cut -d. -f3)
+            NEXT="v${MAJOR}.${MINOR}.$((PATCH + 1))"
+          fi
+          echo "tag=$NEXT" >> "$GITHUB_OUTPUT"
+          echo "version=${NEXT#v}" >> "$GITHUB_OUTPUT"
+          echo "Next version: $NEXT"
+
       - name: Build binaries
         env:
-          VERSION: ${{ github.ref_name }}
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           mkdir -p dist
-          V="${VERSION#v}"
-          LDFLAGS="-s -w -X go.agentprotocol.cloud/cli/cmd.version=${V}"
+          LDFLAGS="-s -w -X go.agentprotocol.cloud/cli/cmd.version=${VERSION}"
           for pair in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
             GOOS=${pair%/*} GOARCH=${pair#*/}
-            NAME="ap_${V}_${GOOS}_${GOARCH}"
+            NAME="ap_${VERSION}_${GOOS}_${GOARCH}"
             echo "Building ${NAME}"
             CGO_ENABLED=0 GOOS=$GOOS GOARCH=$GOARCH go build -trimpath -ldflags "$LDFLAGS" -o "dist/${NAME}/ap" .
             tar -czf "dist/${NAME}.tar.gz" -C dist "${NAME}"
@@ -36,11 +52,13 @@ jobs:
           done
           cd dist && sha256sum *.tar.gz > checksums.txt
 
-      - name: Create GitHub release
+      - name: Create tag and release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${{ github.ref_name }}" \
-            --title "ap ${{ github.ref_name }}" \
+          git tag "${{ steps.version.outputs.tag }}"
+          git push origin "${{ steps.version.outputs.tag }}"
+          gh release create "${{ steps.version.outputs.tag }}" \
+            --title "ap ${{ steps.version.outputs.tag }}" \
             --generate-notes \
             dist/*.tar.gz dist/checksums.txt
