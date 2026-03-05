@@ -88,6 +88,143 @@ type getSessionResponse struct {
 	Messages []Message `json:"messages"`
 }
 
+type Workspace struct {
+	ID        string    `json:"id"`
+	OrgID     string    `json:"org_id"`
+	Name      string    `json:"name"`
+	IsDefault bool      `json:"is_default"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type OrgInfo struct {
+	OrgID           string    `json:"org_id"`
+	UserSub         string    `json:"user_sub"`
+	Role            string    `json:"role"`
+	ActiveWorkspace Workspace `json:"active_workspace"`
+}
+
+type InviteOrgMemberRequest struct {
+	Email string `json:"email"`
+	Role  string `json:"role,omitempty"`
+}
+
+type InviteOrgMemberResponse struct {
+	ID             string    `json:"id"`
+	Email          string    `json:"email"`
+	OrganizationID string    `json:"organization_id"`
+	Status         string    `json:"status"`
+	ExpiresAt      time.Time `json:"expires_at"`
+}
+
+type ListWorkspacesResponse struct {
+	Workspaces      []Workspace `json:"workspaces"`
+	ActiveWorkspace Workspace   `json:"active_workspace"`
+}
+
+type CreateWorkspaceRequest struct {
+	Name string `json:"name"`
+}
+
+type SwitchWorkspaceRequest struct {
+	WorkspaceID string `json:"workspace_id"`
+}
+
+type IntegrationConnection struct {
+	ID            string    `json:"id"`
+	OrgID         string    `json:"org_id"`
+	WorkspaceID   string    `json:"workspace_id"`
+	OwnerUserSub  string    `json:"owner_user_sub"`
+	Scope         string    `json:"scope"`
+	Integration   string    `json:"integration"`
+	Provider      string    `json:"provider"`
+	CredentialRef string    `json:"credential_ref"`
+	Status        string    `json:"status"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+}
+
+type CreateIntegrationConnectionRequest struct {
+	Integration   string            `json:"integration"`
+	Provider      string            `json:"provider"`
+	Scope         string            `json:"scope"`
+	WorkspaceID   string            `json:"workspace_id,omitempty"`
+	CredentialRef string            `json:"credential_ref,omitempty"`
+	Credentials   map[string]string `json:"credentials"`
+}
+
+type UpdateIntegrationConnectionRequest struct {
+	Integration   *string           `json:"integration,omitempty"`
+	Provider      *string           `json:"provider,omitempty"`
+	Scope         *string           `json:"scope,omitempty"`
+	WorkspaceID   *string           `json:"workspace_id,omitempty"`
+	CredentialRef *string           `json:"credential_ref,omitempty"`
+	Status        *string           `json:"status,omitempty"`
+	Credentials   map[string]string `json:"credentials,omitempty"`
+}
+
+type ListIntegrationConnectionsResponse struct {
+	Connections []IntegrationConnection `json:"connections"`
+}
+
+type Action struct {
+	ID                 string `json:"id"`
+	Name               string `json:"name"`
+	Description        string `json:"description"`
+	Integration        string `json:"integration"`
+	Provider           string `json:"provider"`
+	ReadOnly           bool   `json:"read_only"`
+	PermissionAction   string `json:"permission_action"`
+	PermissionResource string `json:"permission_resource"`
+}
+
+type ListActionsResponse struct {
+	Actions []Action `json:"actions"`
+}
+
+type FindActionsRequest struct {
+	Query       string `json:"query,omitempty"`
+	Integration string `json:"integration,omitempty"`
+	Provider    string `json:"provider,omitempty"`
+}
+
+type ExecuteActionRequest struct {
+	Action       string         `json:"action"`
+	Input        map[string]any `json:"input,omitempty"`
+	ConnectionID string         `json:"connection_id,omitempty"`
+	SessionID    string         `json:"session_id,omitempty"`
+}
+
+type ExecuteActionResponse struct {
+	InvocationID string         `json:"invocation_id"`
+	Action       string         `json:"action"`
+	ConnectionID string         `json:"connection_id"`
+	Result       map[string]any `json:"result"`
+}
+
+type ActionInvocation struct {
+	ID             string          `json:"id"`
+	SessionID      string          `json:"session_id"`
+	OrgID          string          `json:"org_id"`
+	WorkspaceID    string          `json:"workspace_id"`
+	UserSub        string          `json:"user_sub"`
+	Action         string          `json:"action"`
+	Resource       string          `json:"resource"`
+	ConnectionID   string          `json:"connection_id"`
+	PermissionUsed string          `json:"permission_used"`
+	Status         string          `json:"status"`
+	DurationMS     int64           `json:"duration_ms"`
+	Cost           string          `json:"cost"`
+	Error          string          `json:"error"`
+	CreatedAt      time.Time       `json:"created_at"`
+	Request        json.RawMessage `json:"sanitized_request"`
+	Response       json.RawMessage `json:"sanitized_response"`
+}
+
+type ListActionInvocationsResponse struct {
+	Invocations []ActionInvocation `json:"invocations"`
+}
+
 func (c *Client) CreateSession(ctx context.Context, req CreateSessionRequest) (*Session, error) {
 	var out Session
 	if err := c.doJSON(ctx, http.MethodPost, "/v1/operator/sessions", req, &out); err != nil {
@@ -160,6 +297,142 @@ func (c *Client) WaitForSessionReady(ctx context.Context, sessionID string, time
 	}
 }
 
+func (c *Client) GetOrg(ctx context.Context) (*OrgInfo, error) {
+	var out OrgInfo
+	if err := c.doJSON(ctx, http.MethodGet, "/v1/operator/org", nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (c *Client) InviteOrgMember(ctx context.Context, req InviteOrgMemberRequest) (*InviteOrgMemberResponse, error) {
+	var out InviteOrgMemberResponse
+	if err := c.doJSON(ctx, http.MethodPost, "/v1/operator/org/invite", req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (c *Client) ListWorkspaces(ctx context.Context) (*ListWorkspacesResponse, error) {
+	var out ListWorkspacesResponse
+	if err := c.doJSON(ctx, http.MethodGet, "/v1/operator/workspaces", nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (c *Client) CreateWorkspace(ctx context.Context, req CreateWorkspaceRequest) (*Workspace, error) {
+	var out Workspace
+	if err := c.doJSON(ctx, http.MethodPost, "/v1/operator/workspaces", req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (c *Client) SwitchWorkspace(ctx context.Context, workspaceID string) (*Workspace, error) {
+	var out Workspace
+	if err := c.doJSON(ctx, http.MethodPost, "/v1/operator/workspaces/switch", SwitchWorkspaceRequest{WorkspaceID: workspaceID}, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (c *Client) CreateIntegrationConnection(ctx context.Context, req CreateIntegrationConnectionRequest) (*IntegrationConnection, error) {
+	var out IntegrationConnection
+	if err := c.doJSON(ctx, http.MethodPost, "/v1/operator/integrations/connections", req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (c *Client) ListIntegrationConnections(ctx context.Context, integration, provider string, includeRevoked bool) ([]IntegrationConnection, error) {
+	path := "/v1/operator/integrations/connections"
+	query := make([]string, 0, 3)
+	if strings.TrimSpace(integration) != "" {
+		query = append(query, "integration="+urlQueryEscape(integration))
+	}
+	if strings.TrimSpace(provider) != "" {
+		query = append(query, "provider="+urlQueryEscape(provider))
+	}
+	if includeRevoked {
+		query = append(query, "include_revoked=true")
+	}
+	if len(query) > 0 {
+		path += "?" + strings.Join(query, "&")
+	}
+	var out ListIntegrationConnectionsResponse
+	if err := c.doJSON(ctx, http.MethodGet, path, nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Connections, nil
+}
+
+func (c *Client) UpdateIntegrationConnection(ctx context.Context, id string, req UpdateIntegrationConnectionRequest) (*IntegrationConnection, error) {
+	var out IntegrationConnection
+	if err := c.doJSON(ctx, http.MethodPatch, "/v1/operator/integrations/connections/"+id, req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (c *Client) DeleteIntegrationConnection(ctx context.Context, id string) error {
+	return c.doJSON(ctx, http.MethodDelete, "/v1/operator/integrations/connections/"+id, nil, nil)
+}
+
+func (c *Client) ListActions(ctx context.Context, integration, provider string) ([]Action, error) {
+	path := "/v1/operator/actions"
+	query := make([]string, 0, 2)
+	if strings.TrimSpace(integration) != "" {
+		query = append(query, "integration="+urlQueryEscape(integration))
+	}
+	if strings.TrimSpace(provider) != "" {
+		query = append(query, "provider="+urlQueryEscape(provider))
+	}
+	if len(query) > 0 {
+		path += "?" + strings.Join(query, "&")
+	}
+	var out ListActionsResponse
+	if err := c.doJSON(ctx, http.MethodGet, path, nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Actions, nil
+}
+
+func (c *Client) FindActions(ctx context.Context, req FindActionsRequest) ([]Action, error) {
+	var out ListActionsResponse
+	if err := c.doJSON(ctx, http.MethodPost, "/v1/operator/actions/find", req, &out); err != nil {
+		return nil, err
+	}
+	return out.Actions, nil
+}
+
+func (c *Client) ExecuteAction(ctx context.Context, req ExecuteActionRequest) (*ExecuteActionResponse, error) {
+	var out ExecuteActionResponse
+	if err := c.doJSON(ctx, http.MethodPost, "/v1/operator/actions/execute", req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (c *Client) ListActionInvocations(ctx context.Context, all bool, limit int) ([]ActionInvocation, error) {
+	path := "/v1/operator/actions/invocations"
+	query := make([]string, 0, 2)
+	if all {
+		query = append(query, "all=true")
+	}
+	if limit > 0 {
+		query = append(query, "limit="+fmt.Sprintf("%d", limit))
+	}
+	if len(query) > 0 {
+		path += "?" + strings.Join(query, "&")
+	}
+	var out ListActionInvocationsResponse
+	if err := c.doJSON(ctx, http.MethodGet, path, nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Invocations, nil
+}
+
 func (c *Client) doJSON(ctx context.Context, method, path string, reqBody any, respBody any) error {
 	var body io.Reader
 	if reqBody != nil {
@@ -218,4 +491,18 @@ func (c *Client) doJSON(ctx context.Context, method, path string, reqBody any, r
 		}
 	}
 	return nil
+}
+
+func urlQueryEscape(value string) string {
+	replacer := strings.NewReplacer(
+		"%", "%25",
+		" ", "%20",
+		"+", "%2B",
+		"&", "%26",
+		"=", "%3D",
+		"?", "%3F",
+		"#", "%23",
+		"/", "%2F",
+	)
+	return replacer.Replace(strings.TrimSpace(value))
 }
