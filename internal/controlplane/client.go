@@ -21,17 +21,38 @@ func NewClient(baseURL, accessToken string) *Client {
 	return &Client{
 		baseURL:     strings.TrimRight(baseURL, "/"),
 		accessToken: accessToken,
-		http:        &http.Client{Timeout: 120 * time.Second},
+		http:        &http.Client{Timeout: 10 * time.Minute},
 	}
 }
 
+type APIError struct {
+	Status int
+	Method string
+	Path   string
+	Code   string
+	Msg    string
+}
+
+func (e *APIError) Error() string {
+	if e == nil {
+		return ""
+	}
+	if strings.TrimSpace(e.Code) != "" {
+		return fmt.Sprintf("control-plane %s %s failed with %d (%s): %s", e.Method, e.Path, e.Status, e.Code, e.Msg)
+	}
+	return fmt.Sprintf("control-plane %s %s failed with %d: %s", e.Method, e.Path, e.Status, e.Msg)
+}
+
 type Session struct {
-	ID            string    `json:"id"`
-	Status        string    `json:"status"`
-	RuntimeStatus string    `json:"runtime_status"`
-	Title         string    `json:"title"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	ID               string    `json:"id"`
+	Status           string    `json:"status"`
+	RuntimeStatus    string    `json:"runtime_status"`
+	RecoveryStatus   string    `json:"recovery_status"`
+	RecoveryError    string    `json:"recovery_error"`
+	RecoveryAttempts int       `json:"recovery_attempts"`
+	Title            string    `json:"title"`
+	CreatedAt        time.Time `json:"created_at"`
+	UpdatedAt        time.Time `json:"updated_at"`
 }
 
 type Message struct {
@@ -55,6 +76,7 @@ type TurnResponse struct {
 	Status           string `json:"status"`
 	AssistantContent string `json:"assistant_content"`
 	Error            string `json:"error"`
+	Code             string `json:"code"`
 }
 
 type listSessionsResponse struct {
@@ -104,6 +126,12 @@ func (c *Client) GetTurn(ctx context.Context, sessionID, turnID string) (*TurnRe
 		return nil, err
 	}
 	return &out, nil
+}
+
+func (c *Client) SetRecoveryKey(ctx context.Context, sessionID, key string) error {
+	return c.doJSON(ctx, http.MethodPost, "/v1/operator/sessions/"+sessionID+"/recovery-key", map[string]string{
+		"anthropic_api_key": key,
+	}, nil)
 }
 
 func (c *Client) WaitForSessionReady(ctx context.Context, sessionID string, timeout time.Duration) (*Session, error) {
@@ -163,7 +191,25 @@ func (c *Client) doJSON(ctx context.Context, method, path string, reqBody any, r
 		if len(raw) == 0 {
 			return fmt.Errorf("control-plane %s %s failed with %d", method, path, resp.StatusCode)
 		}
-		return fmt.Errorf("control-plane %s %s failed with %d: %s", method, path, resp.StatusCode, strings.TrimSpace(string(raw)))
+		var payload struct {
+			Error string `json:"error"`
+			Code  string `json:"code"`
+		}
+		if err := json.Unmarshal(raw, &payload); err == nil && strings.TrimSpace(payload.Error) != "" {
+			return &APIError{
+				Status: resp.StatusCode,
+				Method: method,
+				Path:   path,
+				Code:   payload.Code,
+				Msg:    payload.Error,
+			}
+		}
+		return &APIError{
+			Status: resp.StatusCode,
+			Method: method,
+			Path:   path,
+			Msg:    strings.TrimSpace(string(raw)),
+		}
 	}
 
 	if respBody != nil {

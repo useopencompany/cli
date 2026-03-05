@@ -66,9 +66,6 @@ var sessionCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		if session.RuntimeStatus != "ready" || session.Status != "ready" {
-			return fmt.Errorf("ap runtime recovery is not supported yet for session %s", session.ID)
-		}
 
 		m := spawn.NewResumeModel(token.WorkspaceName(), client, session.ID, messages)
 		p := tea.NewProgram(m, tea.WithAltScreen())

@@ -38,9 +38,11 @@ type Model struct {
 	width     int
 	height    int
 
-	api       *controlplane.Client
-	sessionID string
-	apiKey    string
+	api                 *controlplane.Client
+	sessionID           string
+	apiKey              string
+	pendingRetryContent string
+	awaitingRecoveryKey bool
 
 	// API key setup sub-model.
 	apiKeyModel apikey.Model
@@ -156,6 +158,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			os.Setenv("ANTHROPIC_API_KEY", msg.Key)
 			m.apiKey = msg.Key
 		}
+		if m.awaitingRecoveryKey && m.sessionID != "" {
+			m.awaitingRecoveryKey = false
+			m.phase = phaseOperator
+			return m, m.setRecoveryKeyAndRetryCmd()
+		}
 		m.phase = phaseProvisionRuntime
 		return m, m.createSessionCmd()
 
@@ -179,6 +186,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case turnDoneMsg:
 		m.submitting = false
+		m.pendingRetryContent = ""
 		m.messages = append(m.messages, Message{Role: "assistant", Content: msg.content})
 		m.viewport.SetContent(m.renderMessages())
 		m.viewport.GotoBottom()
@@ -186,6 +194,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case turnErrorMsg:
 		m.submitting = false
+		if apiErr, ok := asAPIError(msg.err); ok && apiErr.Code == "RECOVERY_KEY_MISSING" {
+			m.awaitingRecoveryKey = true
+			m.phase = phaseAPIKeySetup
+			m.apiKeyModel = apikey.NewModel()
+			m.messages = append(m.messages, Message{Role: "system", Content: "Recovery needs your Anthropic API key for this older session. Provide it to continue."})
+			m.viewport.SetContent(m.renderMessages())
+			m.viewport.GotoBottom()
+			return m, m.apiKeyModel.Init()
+		}
 		m.err = msg.err
 		m.messages = append(m.messages, Message{Role: "system", Content: "Turn failed: " + msg.err.Error()})
 		m.viewport.SetContent(m.renderMessages())
@@ -223,6 +240,7 @@ func (m Model) updateOperator(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.messages = append(m.messages, Message{Role: "user", Content: text})
 			m.input.Reset()
 			m.submitting = true
+			m.pendingRetryContent = text
 			m.viewport.SetContent(m.renderMessages())
 			m.viewport.GotoBottom()
 			return m, m.submitTurnCmd(text)
@@ -276,9 +294,40 @@ func (m Model) waitForSessionReadyCmd() tea.Cmd {
 func (m Model) submitTurnCmd(content string) tea.Cmd {
 	sessionID := m.sessionID
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 		defer cancel()
 
+		resp, err := m.api.CreateTurn(ctx, sessionID, content)
+		if err != nil {
+			return turnErrorMsg{err: err}
+		}
+		if resp.Status != "completed" {
+			if resp.Error != "" {
+				return turnErrorMsg{err: errors.New(resp.Error)}
+			}
+			return turnErrorMsg{err: fmt.Errorf("turn status %s", resp.Status)}
+		}
+		return turnDoneMsg{content: resp.AssistantContent}
+	}
+}
+
+func (m Model) setRecoveryKeyAndRetryCmd() tea.Cmd {
+	sessionID := m.sessionID
+	key := strings.TrimSpace(m.apiKey)
+	content := strings.TrimSpace(m.pendingRetryContent)
+	return func() tea.Msg {
+		if key == "" {
+			return turnErrorMsg{err: fmt.Errorf("missing ANTHROPIC_API_KEY")}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		defer cancel()
+
+		if err := m.api.SetRecoveryKey(ctx, sessionID, key); err != nil {
+			return turnErrorMsg{err: err}
+		}
+		if content == "" {
+			return turnDoneMsg{content: "Recovery key saved. Send your message again."}
+		}
 		resp, err := m.api.CreateTurn(ctx, sessionID, content)
 		if err != nil {
 			return turnErrorMsg{err: err}
@@ -333,7 +382,7 @@ func (m Model) View() string {
 		b.WriteString("\n")
 		help := " enter: send • ctrl+c: quit"
 		if m.submitting {
-			help = " waiting for ap runtime response... • ctrl+c: quit"
+			help = " waiting for ap runtime response (recovery may take a few minutes)... • ctrl+c: quit"
 		}
 		b.WriteString(helpStyle.Render(help))
 		if m.err != nil {
@@ -346,6 +395,14 @@ func (m Model) View() string {
 	}
 
 	return b.String()
+}
+
+func asAPIError(err error) (*controlplane.APIError, bool) {
+	var apiErr *controlplane.APIError
+	if errors.As(err, &apiErr) {
+		return apiErr, true
+	}
+	return nil, false
 }
 
 func (m Model) renderMessages() string {
