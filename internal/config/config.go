@@ -20,6 +20,9 @@ const (
 
 	// DefaultControlPlaneBaseURL is the production ap control-plane API.
 	DefaultControlPlaneBaseURL = "https://ap-controlplane.fly.dev"
+
+	// DefaultDashboardBaseURL is the production dashboard URL.
+	DefaultDashboardBaseURL = "https://agentplatform.cloud"
 )
 
 // Config holds application-level configuration.
@@ -27,6 +30,7 @@ type Config struct {
 	WorkOSClientID      string `json:"workos_client_id"`
 	WorkOSAuthDomain    string `json:"workos_auth_domain,omitempty"`
 	ControlPlaneBaseURL string `json:"control_plane_base_url,omitempty"`
+	DashboardBaseURL    string `json:"dashboard_base_url,omitempty"`
 }
 
 // Dir returns the config directory path (~/.config/ap/).
@@ -68,6 +72,9 @@ func Load() (*Config, error) {
 	}
 	if cfg.ControlPlaneBaseURL == "" {
 		cfg.ControlPlaneBaseURL = envOrDefault("AP_CONTROL_PLANE_BASE_URL", DefaultControlPlaneBaseURL)
+	}
+	if cfg.DashboardBaseURL == "" {
+		cfg.DashboardBaseURL = envOrDefault("AP_DASHBOARD_BASE_URL", DefaultDashboardBaseURL)
 	}
 
 	return cfg, nil

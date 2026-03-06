@@ -60,6 +60,8 @@ ap actions
 ap find slack
 ap do slack.channels.list --input limit=20
 ap actions invocations
+
+ap dashboard
 ```
 
 ## Docs
