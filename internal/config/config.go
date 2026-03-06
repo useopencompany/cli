@@ -63,19 +63,10 @@ func Load() (*Config, error) {
 		_ = json.Unmarshal(data, cfg) // best-effort; fall through to defaults
 	}
 
-	// Environment overrides → compiled defaults.
-	if cfg.WorkOSClientID == "" {
-		cfg.WorkOSClientID = envOrDefault("AP_WORKOS_CLIENT_ID", DefaultWorkOSClientID)
-	}
-	if cfg.WorkOSAuthDomain == "" {
-		cfg.WorkOSAuthDomain = envOrDefault("AP_WORKOS_AUTH_DOMAIN", DefaultWorkOSAuthDomain)
-	}
-	if cfg.ControlPlaneBaseURL == "" {
-		cfg.ControlPlaneBaseURL = envOrDefault("AP_CONTROL_PLANE_BASE_URL", DefaultControlPlaneBaseURL)
-	}
-	if cfg.DashboardBaseURL == "" {
-		cfg.DashboardBaseURL = envOrDefault("AP_DASHBOARD_BASE_URL", DefaultDashboardBaseURL)
-	}
+	applyEnvOverride(&cfg.WorkOSClientID, "AP_WORKOS_CLIENT_ID", DefaultWorkOSClientID)
+	applyEnvOverride(&cfg.WorkOSAuthDomain, "AP_WORKOS_AUTH_DOMAIN", DefaultWorkOSAuthDomain)
+	applyEnvOverride(&cfg.ControlPlaneBaseURL, "AP_CONTROL_PLANE_BASE_URL", DefaultControlPlaneBaseURL)
+	applyEnvOverride(&cfg.DashboardBaseURL, "AP_DASHBOARD_BASE_URL", DefaultDashboardBaseURL)
 
 	return cfg, nil
 }
@@ -95,9 +86,12 @@ func Save(cfg *Config) error {
 	return os.WriteFile(filepath.Join(dir, configFile), data, 0o600)
 }
 
-func envOrDefault(key, fallback string) string {
+func applyEnvOverride(target *string, key, fallback string) {
 	if v := os.Getenv(key); v != "" {
-		return v
+		*target = v
+		return
 	}
-	return fallback
+	if *target == "" {
+		*target = fallback
+	}
 }
