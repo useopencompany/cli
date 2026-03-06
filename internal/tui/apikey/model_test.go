@@ -1,6 +1,7 @@
 package apikey
 
 import (
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -44,5 +45,26 @@ func TestChooseStorageCanSwitchToLocal(t *testing.T) {
 	}
 	if done.InVault {
 		t.Fatalf("expected local storage after moving selection down")
+	}
+}
+
+func TestAutomaticSearchFallbackShowsManualNotice(t *testing.T) {
+	model := NewModel("")
+	model.step = stepSearching
+
+	updated, cmd := model.Update(searchResultMsg{})
+	if cmd != nil {
+		t.Fatalf("expected no command, got %v", cmd)
+	}
+
+	next := updated.(Model)
+	if next.step != stepManualEntry {
+		t.Fatalf("expected stepManualEntry, got %v", next.step)
+	}
+	if next.manualNotice == "" {
+		t.Fatalf("expected manual fallback notice to be set")
+	}
+	if view := next.View(); !strings.Contains(view, "ap couldn't find a key automatically.") {
+		t.Fatalf("expected fallback notice in view, got %q", view)
 	}
 }

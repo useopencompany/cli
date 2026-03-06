@@ -30,17 +30,17 @@ const (
 
 // Model handles the interactive API key setup.
 type Model struct {
-	step     step
-	cursor   int
-	width    int
-	key      string
-	input    string
-	foundKey string
-	inVault  bool
-	docsURL  string
-	err      error
-	validErr string // validation error for manual entry
-	storeErr string
+	step         step
+	cursor       int
+	width        int
+	key          string
+	input        string
+	foundKey     string
+	inVault      bool
+	docsURL      string
+	manualNotice string
+	validErr     string // validation error for manual entry
+	storeErr     string
 }
 
 // NewModel creates a new API key setup model.
@@ -82,10 +82,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case searchResultMsg:
 		if msg.err != nil || msg.key == "" {
 			m.step = stepManualEntry
-			m.err = msg.err
+			m.manualNotice = "ap couldn't find a key automatically."
 			return m, nil
 		}
 		m.foundKey = msg.key
+		m.manualNotice = ""
 		m.step = stepFoundKey
 		return m, nil
 	}
@@ -122,6 +123,7 @@ func (m Model) handleChooseSource(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.step = stepSearching
 			return m, m.searchForKey()
 		}
+		m.manualNotice = ""
 		m.step = stepManualEntry
 	}
 	return m, nil
@@ -167,6 +169,7 @@ func (m Model) handleFoundKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.cursor = 0
 		m.storeErr = ""
 	case "n", "N":
+		m.manualNotice = ""
 		m.step = stepManualEntry
 	}
 	return m, nil
@@ -306,8 +309,8 @@ func (m Model) View() string {
 	case stepManualEntry:
 		b.WriteString(titleStyle.Render("  Enter your Anthropic API key:"))
 		b.WriteString("\n\n")
-		if m.err != nil {
-			b.WriteString(warnStyle.Render("  Could not find a key automatically."))
+		if m.manualNotice != "" {
+			b.WriteString(warnStyle.Render(fmt.Sprintf("  %s", m.manualNotice)))
 			b.WriteString("\n\n")
 		}
 		b.WriteString(fmt.Sprintf("  > %s█", m.input))
