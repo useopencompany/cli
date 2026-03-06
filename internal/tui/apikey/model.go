@@ -37,13 +37,25 @@ type Model struct {
 	input    string
 	foundKey string
 	inVault  bool
+	docsURL  string
 	err      error
 	validErr string // validation error for manual entry
+	storeErr string
 }
 
 // NewModel creates a new API key setup model.
-func NewModel() Model {
-	return Model{step: stepChooseSource}
+func NewModel(docsURL string) Model {
+	return Model{step: stepChooseSource, docsURL: strings.TrimSpace(docsURL)}
+}
+
+// NewStorageModel returns the storage choice step with an existing key.
+func NewStorageModel(key, docsURL, storeErr string) Model {
+	return Model{
+		step:     stepChooseStorage,
+		key:      strings.TrimSpace(key),
+		docsURL:  strings.TrimSpace(docsURL),
+		storeErr: strings.TrimSpace(storeErr),
+	}
 }
 
 // SetWidth updates the model width for layout.
@@ -129,8 +141,8 @@ func (m Model) handleManualEntry(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.key = key
 		m.validErr = ""
 		m.step = stepChooseStorage
-		// Start on "Keep locally" (index 1) since vault is disabled.
-		m.cursor = 1
+		m.cursor = 0
+		m.storeErr = ""
 	case "backspace":
 		if len(m.input) > 0 {
 			m.input = m.input[:len(m.input)-1]
@@ -152,8 +164,8 @@ func (m Model) handleFoundKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "y", "Y", "enter":
 		m.key = m.foundKey
 		m.step = stepChooseStorage
-		// Start on "Keep locally" (index 1) since vault is disabled.
-		m.cursor = 1
+		m.cursor = 0
+		m.storeErr = ""
 	case "n", "N":
 		m.step = stepManualEntry
 	}
@@ -163,20 +175,18 @@ func (m Model) handleFoundKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m Model) handleChooseStorage(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "up", "k":
-		// Vault (index 0) is disabled — cursor cannot move there.
-		return m, nil
-	case "down", "j":
-		// Only index 1 is selectable, no movement needed.
-		return m, nil
-	case "enter":
-		// Only "Keep locally" (index 1) is active.
-		if m.cursor != 1 {
-			return m, nil
+		if m.cursor > 0 {
+			m.cursor--
 		}
-		m.inVault = false
+	case "down", "j":
+		if m.cursor < 1 {
+			m.cursor++
+		}
+	case "enter":
+		m.inVault = m.cursor == 0
 		m.step = stepDone
 		return m, func() tea.Msg {
-			return DoneMsg{Key: m.key, InVault: false}
+			return DoneMsg{Key: m.key, InVault: m.inVault}
 		}
 	}
 	return m, nil
@@ -263,7 +273,6 @@ func (m Model) View() string {
 	warnStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("214")) // Orange.
 	errStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("9"))    // Red.
 	selectedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("99")).Bold(true)
-	disabledStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("238")).Strikethrough(true)
 
 	var b strings.Builder
 	b.WriteString("\n")
@@ -322,24 +331,45 @@ func (m Model) View() string {
 		b.WriteString(titleStyle.Render("  Where should this key be stored?"))
 		b.WriteString("\n\n")
 
-		// Vault option — disabled/greyed out.
-		b.WriteString(disabledStyle.Render("    ap key vault (coming soon)"))
-		b.WriteString(dimStyle.Render(" — managed by opencompany"))
-		b.WriteString("\n")
+		if m.storeErr != "" {
+			b.WriteString(errStyle.Render(fmt.Sprintf("  %s", m.storeErr)))
+			b.WriteString("\n\n")
+		}
 
-		// Local option — always selected since it's the only active option.
-		b.WriteString(selectedStyle.Render("  ▸ Keep locally"))
-		b.WriteString("\n")
+		options := []string{
+			"ap key vault (recommended)",
+			"Keep locally",
+		}
+		for i, opt := range options {
+			if i == m.cursor {
+				b.WriteString(selectedStyle.Render(fmt.Sprintf("  ▸ %s", opt)))
+			} else {
+				b.WriteString(dimStyle.Render(fmt.Sprintf("    %s", opt)))
+			}
+			b.WriteString("\n")
+		}
 
 		b.WriteString("\n")
-		b.WriteString(warnStyle.Render("  ⚠ ap will not remember this key across sessions."))
-		b.WriteString("\n")
-		b.WriteString(warnStyle.Render("    The ANTHROPIC_API_KEY env var must be set each time."))
+		if m.cursor == 0 {
+			b.WriteString(dimStyle.Render("  Saved inside Agent Platform so ap can reuse it across sessions."))
+			if m.docsURL != "" {
+				b.WriteString("\n")
+				b.WriteString(dimStyle.Render(fmt.Sprintf("  Docs: %s", m.docsURL)))
+			}
+		} else {
+			b.WriteString(warnStyle.Render("  ⚠ ap will not remember this key across sessions."))
+			b.WriteString("\n")
+			b.WriteString(warnStyle.Render("    The ANTHROPIC_API_KEY env var must be set each time."))
+		}
 		b.WriteString("\n\n")
-		b.WriteString(dimStyle.Render("  enter: confirm"))
+		b.WriteString(dimStyle.Render("  ↑/↓ navigate • enter confirm"))
 
 	case stepDone:
-		b.WriteString(dimStyle.Render("  ✓ Key set for this session."))
+		if m.inVault {
+			b.WriteString(dimStyle.Render("  Saving key to ap key vault..."))
+		} else {
+			b.WriteString(dimStyle.Render("  ✓ Key set for this session."))
+		}
 	}
 
 	return b.String()

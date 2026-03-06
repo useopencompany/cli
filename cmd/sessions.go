@@ -66,8 +66,9 @@ var sessionCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		docsURL := apKeyVaultDocsURL(cfg)
 
-		m := spawn.NewResumeModel(token.WorkspaceName(), client, session.ID, messages)
+		m := spawn.NewResumeModel(token.WorkspaceName(), client, session.ID, messages, docsURL)
 		p := tea.NewProgram(m, tea.WithAltScreen())
 		if _, err := p.Run(); err != nil {
 			return fmt.Errorf("TUI error: %w", err)

@@ -64,6 +64,7 @@ type Message struct {
 
 type CreateSessionRequest struct {
 	AnthropicAPIKey string `json:"anthropic_api_key"`
+	UseAPKeyVault   bool   `json:"use_ap_key_vault,omitempty"`
 	Title           string `json:"title,omitempty"`
 }
 
@@ -265,10 +266,20 @@ func (c *Client) GetTurn(ctx context.Context, sessionID, turnID string) (*TurnRe
 	return &out, nil
 }
 
-func (c *Client) SetRecoveryKey(ctx context.Context, sessionID, key string) error {
-	return c.doJSON(ctx, http.MethodPost, "/v1/operator/sessions/"+sessionID+"/recovery-key", map[string]string{
+func (c *Client) SaveAnthropicKeyToVault(ctx context.Context, key string) error {
+	return c.doJSON(ctx, http.MethodPut, "/v1/operator/key-vault/anthropic", map[string]string{
 		"anthropic_api_key": key,
 	}, nil)
+}
+
+func (c *Client) SetRecoveryKey(ctx context.Context, sessionID, key string, useAPKeyVault bool) error {
+	req := map[string]any{
+		"anthropic_api_key": key,
+	}
+	if useAPKeyVault {
+		req["use_ap_key_vault"] = true
+	}
+	return c.doJSON(ctx, http.MethodPost, "/v1/operator/sessions/"+sessionID+"/recovery-key", req, nil)
 }
 
 func (c *Client) WaitForSessionReady(ctx context.Context, sessionID string, timeout time.Duration) (*Session, error) {
