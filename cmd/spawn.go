@@ -30,8 +30,9 @@ var spawnCmd = &cobra.Command{
 		// Resolve workspace from token claims.
 		workspace := token.WorkspaceName()
 		client := controlplane.NewClient(cfg.ControlPlaneBaseURL, token.AccessToken)
+		docsURL := apKeyVaultDocsURL(cfg)
 
-		m := spawn.NewModel(workspace, client)
+		m := spawn.NewModel(workspace, client, docsURL)
 		p := tea.NewProgram(m, tea.WithAltScreen())
 
 		if _, err := p.Run(); err != nil {
