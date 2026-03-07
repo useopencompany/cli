@@ -27,12 +27,14 @@ var spawnCmd = &cobra.Command{
 			return fmt.Errorf("not authenticated — run 'ap auth login' first")
 		}
 
-		// Resolve workspace from token claims.
-		workspace := token.WorkspaceName()
 		client := controlplane.NewClient(cfg.ControlPlaneBaseURL, token.AccessToken)
+		workspace := token.WorkspaceName()
+		if info, infoErr := fetchNamedOrgInfo(cmd.Context(), client); infoErr == nil {
+			workspace = namedContextLabel(info, workspace)
+		}
 		docsURL := apKeyVaultDocsURL(cfg)
 
-		m := spawn.NewModel(workspace, client, docsURL)
+		m := spawn.NewModel(workspace, client, docsURL, spawnAgentID)
 		p := tea.NewProgram(m, tea.WithAltScreen())
 
 		if _, err := p.Run(); err != nil {
@@ -43,6 +45,9 @@ var spawnCmd = &cobra.Command{
 	},
 }
 
+var spawnAgentID string
+
 func init() {
+	spawnCmd.Flags().StringVar(&spawnAgentID, "agent", "", "Start the session with an installed interactive agent")
 	rootCmd.AddCommand(spawnCmd)
 }

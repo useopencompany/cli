@@ -27,6 +27,7 @@ const (
 
 // Message represents a single operator message.
 type Message struct {
+	ID      string
 	Role    string
 	Content string
 }
@@ -38,9 +39,12 @@ type Model struct {
 	width           int
 	height          int
 	keyVaultDocsURL string
+	agentID         string
+	agentVersion    string
 
 	api                 *controlplane.Client
 	sessionID           string
+	activeTurnID        string
 	apiKey              string
 	pendingRetryContent string
 	awaitingRecoveryKey bool
@@ -57,20 +61,20 @@ type Model struct {
 }
 
 // NewModel creates a spawn TUI for creating a new operator session.
-func NewModel(workspace string, client *controlplane.Client, keyVaultDocsURL string) Model {
-	return newModel(workspace, client, "", nil, keyVaultDocsURL)
+func NewModel(workspace string, client *controlplane.Client, keyVaultDocsURL, agentID string) Model {
+	return newModel(workspace, client, "", nil, keyVaultDocsURL, agentID, "")
 }
 
 // NewResumeModel creates a spawn TUI for an existing operator session.
-func NewResumeModel(workspace string, client *controlplane.Client, sessionID string, history []controlplane.Message, keyVaultDocsURL string) Model {
+func NewResumeModel(workspace string, client *controlplane.Client, sessionID string, history []controlplane.Message, keyVaultDocsURL, agentID, agentVersion string) Model {
 	messages := make([]Message, 0, len(history))
 	for _, msg := range history {
-		messages = append(messages, Message{Role: msg.Role, Content: msg.Content})
+		messages = append(messages, Message{ID: msg.ID, Role: msg.Role, Content: msg.Content})
 	}
-	return newModel(workspace, client, sessionID, messages, keyVaultDocsURL)
+	return newModel(workspace, client, sessionID, messages, keyVaultDocsURL, agentID, agentVersion)
 }
 
-func newModel(workspace string, client *controlplane.Client, sessionID string, messages []Message, keyVaultDocsURL string) Model {
+func newModel(workspace string, client *controlplane.Client, sessionID string, messages []Message, keyVaultDocsURL, agentID, agentVersion string) Model {
 	ta := textarea.New()
 	ta.Placeholder = "Type your message..."
 	ta.Prompt = "│ "
@@ -98,6 +102,8 @@ func newModel(workspace string, client *controlplane.Client, sessionID string, m
 		workspace:       workspace,
 		phase:           startPhase,
 		keyVaultDocsURL: keyVaultDocsURL,
+		agentID:         strings.TrimSpace(agentID),
+		agentVersion:    strings.TrimSpace(agentVersion),
 		api:             client,
 		sessionID:       sessionID,
 		apiKey:          apiKey,
@@ -123,9 +129,12 @@ func (m Model) Init() tea.Cmd {
 }
 
 type apiKeyMissingMsg struct{}
-type sessionCreatedMsg struct{ sessionID string }
+type sessionCreatedMsg struct{ session *controlplane.Session }
 type sessionReadyMsg struct{}
 type sessionErrorMsg struct{ err error }
+type turnCreatedMsg struct{ resp *controlplane.TurnResponse }
+type turnPolledMsg struct{ resp *controlplane.TurnResponse }
+type pollTurnMsg struct{ turnID string }
 type turnDoneMsg struct{ content string }
 type turnErrorMsg struct{ err error }
 type apiKeyVaultSavedMsg struct{ err error }
@@ -180,7 +189,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.advanceAfterAPIKeyReady()
 
 	case sessionCreatedMsg:
-		m.sessionID = msg.sessionID
+		if msg.session != nil {
+			m.sessionID = msg.session.ID
+			if strings.TrimSpace(msg.session.AgentID) != "" {
+				m.agentID = strings.TrimSpace(msg.session.AgentID)
+			}
+			if strings.TrimSpace(msg.session.AgentVersion) != "" {
+				m.agentVersion = strings.TrimSpace(msg.session.AgentVersion)
+			}
+		}
 		m.messages = append(m.messages, Message{Role: "system", Content: "Provisioning ap runtime..."})
 		m.viewport.SetContent(m.renderMessages())
 		m.viewport.GotoBottom()
@@ -188,7 +205,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case sessionReadyMsg:
 		m.phase = phaseOperator
-		m.messages = append(m.messages, Message{Role: "system", Content: "ap runtime ready. Operator is online."})
+		readyMsg := "ap runtime ready. Operator is online."
+		if strings.TrimSpace(m.agentID) != "" {
+			readyMsg = "ap runtime ready. " + m.agentID + " is online."
+		}
+		m.messages = append(m.messages, Message{Role: "system", Content: readyMsg})
 		m.viewport.SetContent(m.renderMessages())
 		m.viewport.GotoBottom()
 		return m, textarea.Blink
@@ -199,14 +220,61 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case turnDoneMsg:
 		m.submitting = false
+		m.activeTurnID = ""
 		m.pendingRetryContent = ""
 		m.messages = append(m.messages, Message{Role: "assistant", Content: msg.content})
 		m.viewport.SetContent(m.renderMessages())
 		m.viewport.GotoBottom()
 		return m, nil
 
+	case turnCreatedMsg:
+		m.activeTurnID = msg.resp.TurnID
+		m.mergeMessages(msg.resp.Messages)
+		m.viewport.SetContent(m.renderMessages())
+		m.viewport.GotoBottom()
+		return m, m.scheduleTurnPollCmd(msg.resp.TurnID)
+
+	case pollTurnMsg:
+		if msg.turnID == "" || msg.turnID != m.activeTurnID {
+			return m, nil
+		}
+		return m, m.fetchTurnCmd(msg.turnID)
+
+	case turnPolledMsg:
+		m.mergeMessages(msg.resp.Messages)
+		m.viewport.SetContent(m.renderMessages())
+		m.viewport.GotoBottom()
+		switch msg.resp.Status {
+		case "completed":
+			m.submitting = false
+			m.activeTurnID = ""
+			m.pendingRetryContent = ""
+			return m, nil
+		case "failed":
+			m.submitting = false
+			m.activeTurnID = ""
+			if msg.resp.Code == "RECOVERY_KEY_MISSING" {
+				m.awaitingRecoveryKey = true
+				if strings.TrimSpace(m.apiKey) != "" {
+					return m, m.setRecoveryKeyAndRetryCmd(false)
+				}
+				m.messages = append(m.messages, Message{Role: "system", Content: "Recovery needs your Anthropic API key for this older session. Checking ap key vault first."})
+				m.viewport.SetContent(m.renderMessages())
+				m.viewport.GotoBottom()
+				return m, m.setRecoveryKeyAndRetryCmd(true)
+			}
+			m.err = errors.New(msg.resp.Error)
+			m.messages = append(m.messages, Message{Role: "system", Content: "Turn failed: " + msg.resp.Error})
+			m.viewport.SetContent(m.renderMessages())
+			m.viewport.GotoBottom()
+			return m, nil
+		default:
+			return m, m.scheduleTurnPollCmd(msg.resp.TurnID)
+		}
+
 	case turnErrorMsg:
 		m.submitting = false
+		m.activeTurnID = ""
 		if apiErr, ok := asAPIError(msg.err); ok && apiErr.Code == "RECOVERY_KEY_MISSING" {
 			m.awaitingRecoveryKey = true
 			if strings.TrimSpace(m.apiKey) != "" {
@@ -293,6 +361,7 @@ func (m Model) createSessionCmd(useAPKeyVault bool) tea.Cmd {
 		sess, err := m.api.CreateSession(ctx, controlplane.CreateSessionRequest{
 			AnthropicAPIKey: apiKey,
 			UseAPKeyVault:   useAPKeyVault,
+			AgentID:         strings.TrimSpace(m.agentID),
 		})
 		if err != nil {
 			if useAPKeyVault && isKeyVaultPromptError(err) {
@@ -300,7 +369,7 @@ func (m Model) createSessionCmd(useAPKeyVault bool) tea.Cmd {
 			}
 			return sessionErrorMsg{err: err}
 		}
-		return sessionCreatedMsg{sessionID: sess.ID}
+		return sessionCreatedMsg{session: sess}
 	}
 }
 
@@ -324,17 +393,15 @@ func (m Model) submitTurnCmd(content string) tea.Cmd {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 		defer cancel()
 
-		resp, err := m.api.CreateTurn(ctx, sessionID, content)
+		wait := false
+		resp, err := m.api.CreateTurn(ctx, sessionID, controlplane.CreateTurnRequest{
+			Content: content,
+			Wait:    &wait,
+		})
 		if err != nil {
 			return turnErrorMsg{err: err}
 		}
-		if resp.Status != "completed" {
-			if resp.Error != "" {
-				return turnErrorMsg{err: errors.New(resp.Error)}
-			}
-			return turnErrorMsg{err: fmt.Errorf("turn status %s", resp.Status)}
-		}
-		return turnDoneMsg{content: resp.AssistantContent}
+		return turnCreatedMsg{resp: resp}
 	}
 }
 
@@ -371,17 +438,35 @@ func (m Model) setRecoveryKeyAndRetryCmd(useAPKeyVault bool) tea.Cmd {
 		if content == "" {
 			return turnDoneMsg{content: "Recovery key saved. Send your message again."}
 		}
-		resp, err := m.api.CreateTurn(ctx, sessionID, content)
+		wait := false
+		resp, err := m.api.CreateTurn(ctx, sessionID, controlplane.CreateTurnRequest{
+			Content: content,
+			Wait:    &wait,
+		})
 		if err != nil {
 			return turnErrorMsg{err: err}
 		}
-		if resp.Status != "completed" {
-			if resp.Error != "" {
-				return turnErrorMsg{err: errors.New(resp.Error)}
-			}
-			return turnErrorMsg{err: fmt.Errorf("turn status %s", resp.Status)}
+		return turnCreatedMsg{resp: resp}
+	}
+}
+
+func (m Model) scheduleTurnPollCmd(turnID string) tea.Cmd {
+	return tea.Tick(350*time.Millisecond, func(time.Time) tea.Msg {
+		return pollTurnMsg{turnID: turnID}
+	})
+}
+
+func (m Model) fetchTurnCmd(turnID string) tea.Cmd {
+	sessionID := m.sessionID
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		resp, err := m.api.GetTurn(ctx, sessionID, turnID)
+		if err != nil {
+			return turnErrorMsg{err: err}
 		}
-		return turnDoneMsg{content: resp.AssistantContent}
+		return turnPolledMsg{resp: resp}
 	}
 }
 
@@ -397,7 +482,7 @@ func (m Model) View() string {
 		"%s  %s  %s",
 		logoStyle.Render("✦ ap"),
 		workspaceStyle.Render(m.workspace),
-		billingStyle.Render("operator"),
+		billingStyle.Render(m.modeLabel()),
 	)
 	b.WriteString(headerStyle.Render(header))
 	b.WriteString("\n")
@@ -452,6 +537,16 @@ func asAPIError(err error) (*controlplane.APIError, bool) {
 	return nil, false
 }
 
+func (m Model) modeLabel() string {
+	if strings.TrimSpace(m.agentID) == "" {
+		return "operator"
+	}
+	if strings.TrimSpace(m.agentVersion) == "" {
+		return "agent: " + m.agentID
+	}
+	return "agent: " + m.agentID + "@" + m.agentVersion
+}
+
 func isKeyVaultPromptError(err error) bool {
 	apiErr, ok := asAPIError(err)
 	if !ok {
@@ -473,10 +568,37 @@ func (m Model) renderMessages() string {
 			b.WriteString(userMsgStyle.Render(msg.Content))
 		case "assistant":
 			b.WriteString(assistantMsgStyle.Render("  " + msg.Content))
+		case "tool":
+			b.WriteString(toolMsgStyle.Render("  " + msg.Content))
 		case "system":
 			b.WriteString(systemMsgStyle.Render("  " + msg.Content))
 		}
 		b.WriteString("\n\n")
 	}
 	return b.String()
+}
+
+func (m *Model) mergeMessages(incoming []controlplane.Message) {
+	for _, msg := range incoming {
+		if msg.ID == "" {
+			continue
+		}
+		found := false
+		for i := range m.messages {
+			if m.messages[i].ID != msg.ID {
+				continue
+			}
+			m.messages[i].Role = msg.Role
+			m.messages[i].Content = msg.Content
+			found = true
+			break
+		}
+		if !found {
+			m.messages = append(m.messages, Message{
+				ID:      msg.ID,
+				Role:    msg.Role,
+				Content: msg.Content,
+			})
+		}
+	}
 }

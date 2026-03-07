@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -51,12 +52,15 @@ type Session struct {
 	RecoveryError    string    `json:"recovery_error"`
 	RecoveryAttempts int       `json:"recovery_attempts"`
 	Title            string    `json:"title"`
+	AgentID          string    `json:"agent_id"`
+	AgentVersion     string    `json:"agent_version"`
 	CreatedAt        time.Time `json:"created_at"`
 	UpdatedAt        time.Time `json:"updated_at"`
 }
 
 type Message struct {
 	ID        string    `json:"id"`
+	TurnID    string    `json:"turn_id,omitempty"`
 	Role      string    `json:"role"`
 	Content   string    `json:"content"`
 	CreatedAt time.Time `json:"created_at"`
@@ -66,18 +70,21 @@ type CreateSessionRequest struct {
 	AnthropicAPIKey string `json:"anthropic_api_key"`
 	UseAPKeyVault   bool   `json:"use_ap_key_vault,omitempty"`
 	Title           string `json:"title,omitempty"`
+	AgentID         string `json:"agent_id,omitempty"`
 }
 
 type CreateTurnRequest struct {
 	Content string `json:"content"`
+	Wait    *bool  `json:"wait,omitempty"`
 }
 
 type TurnResponse struct {
-	TurnID           string `json:"turn_id"`
-	Status           string `json:"status"`
-	AssistantContent string `json:"assistant_content"`
-	Error            string `json:"error"`
-	Code             string `json:"code"`
+	TurnID           string    `json:"turn_id"`
+	Status           string    `json:"status"`
+	AssistantContent string    `json:"assistant_content"`
+	Error            string    `json:"error"`
+	Code             string    `json:"code"`
+	Messages         []Message `json:"messages"`
 }
 
 type listSessionsResponse struct {
@@ -99,8 +106,10 @@ type Workspace struct {
 }
 
 type OrgInfo struct {
+	OrgName         string    `json:"org_name"`
 	OrgID           string    `json:"org_id"`
 	UserSub         string    `json:"user_sub"`
+	UserDisplayName string    `json:"user_display_name"`
 	Role            string    `json:"role"`
 	ActiveWorkspace Workspace `json:"active_workspace"`
 }
@@ -116,6 +125,36 @@ type InviteOrgMemberResponse struct {
 	OrganizationID string    `json:"organization_id"`
 	Status         string    `json:"status"`
 	ExpiresAt      time.Time `json:"expires_at"`
+}
+
+type OrganizationMembership struct {
+	OrgID   string `json:"org_id"`
+	Name    string `json:"name"`
+	Role    string `json:"role"`
+	Status  string `json:"status"`
+	Current bool   `json:"current"`
+}
+
+type ListOrganizationMembershipsResponse struct {
+	Organizations []OrganizationMembership `json:"organizations"`
+}
+
+type CreateOrganizationRequest struct {
+	Name string `json:"name"`
+}
+
+type BootstrapRequest struct {
+	PreferredOrganizationID string `json:"preferred_organization_id,omitempty"`
+	DisplayName             string `json:"display_name,omitempty"`
+}
+
+type BootstrapResponse struct {
+	OrganizationID              string    `json:"organization_id"`
+	OrganizationName            string    `json:"organization_name"`
+	UserDisplayName             string    `json:"user_display_name"`
+	ActiveWorkspace             Workspace `json:"active_workspace"`
+	CreatedPersonalOrganization bool      `json:"created_personal_organization"`
+	UsingPersonalOrganization   bool      `json:"using_personal_organization"`
 }
 
 type ListWorkspacesResponse struct {
@@ -226,6 +265,51 @@ type ListActionInvocationsResponse struct {
 	Invocations []ActionInvocation `json:"invocations"`
 }
 
+type AgentReadiness struct {
+	Installed          bool     `json:"installed"`
+	MissingConnections []string `json:"missing_connections"`
+	MissingPermissions []string `json:"missing_permissions"`
+	MissingSkills      []string `json:"missing_skills"`
+}
+
+type AgentAssets struct {
+	Identity       string   `json:"identity"`
+	Bootstrap      string   `json:"bootstrap"`
+	Instructions   []string `json:"instructions"`
+	Knowledge      []string `json:"knowledge"`
+	MemoryTemplate string   `json:"memory_template"`
+}
+
+type Agent struct {
+	ID                   string         `json:"id"`
+	Name                 string         `json:"name"`
+	Version              string         `json:"version"`
+	Description          string         `json:"description"`
+	Category             string         `json:"category"`
+	Tags                 []string       `json:"tags"`
+	Mode                 string         `json:"mode"`
+	Skills               []string       `json:"skills"`
+	RequiredIntegrations []string       `json:"required_integrations"`
+	RecommendedFor       []string       `json:"recommended_for"`
+	Assets               AgentAssets    `json:"assets"`
+	Readiness            AgentReadiness `json:"readiness"`
+	InstallStatus        string         `json:"install_status"`
+	InstalledVersion     string         `json:"installed_version"`
+	BootstrapCompletedAt *time.Time     `json:"bootstrap_completed_at"`
+}
+
+type FindAgentsRequest struct {
+	Query string `json:"query,omitempty"`
+}
+
+type InstallAgentRequest struct {
+	ID string `json:"id"`
+}
+
+type listAgentsResponse struct {
+	Agents []Agent `json:"agents"`
+}
+
 func (c *Client) CreateSession(ctx context.Context, req CreateSessionRequest) (*Session, error) {
 	var out Session
 	if err := c.doJSON(ctx, http.MethodPost, "/v1/operator/sessions", req, &out); err != nil {
@@ -250,9 +334,9 @@ func (c *Client) GetSession(ctx context.Context, id string) (*Session, []Message
 	return &out.Session, out.Messages, nil
 }
 
-func (c *Client) CreateTurn(ctx context.Context, sessionID, content string) (*TurnResponse, error) {
+func (c *Client) CreateTurn(ctx context.Context, sessionID string, req CreateTurnRequest) (*TurnResponse, error) {
 	var out TurnResponse
-	if err := c.doJSON(ctx, http.MethodPost, "/v1/operator/sessions/"+sessionID+"/turns", CreateTurnRequest{Content: content}, &out); err != nil {
+	if err := c.doJSON(ctx, http.MethodPost, "/v1/operator/sessions/"+sessionID+"/turns", req, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -311,6 +395,30 @@ func (c *Client) WaitForSessionReady(ctx context.Context, sessionID string, time
 func (c *Client) GetOrg(ctx context.Context) (*OrgInfo, error) {
 	var out OrgInfo
 	if err := c.doJSON(ctx, http.MethodGet, "/v1/operator/org", nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (c *Client) Bootstrap(ctx context.Context, req BootstrapRequest) (*BootstrapResponse, error) {
+	var out BootstrapResponse
+	if err := c.doJSON(ctx, http.MethodPost, "/v1/operator/bootstrap", req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (c *Client) ListOrganizationMemberships(ctx context.Context) ([]OrganizationMembership, error) {
+	var out ListOrganizationMembershipsResponse
+	if err := c.doJSON(ctx, http.MethodGet, "/v1/operator/org/memberships", nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Organizations, nil
+}
+
+func (c *Client) CreateOrganization(ctx context.Context, req CreateOrganizationRequest) (*OrganizationMembership, error) {
+	var out OrganizationMembership
+	if err := c.doJSON(ctx, http.MethodPost, "/v1/operator/org", req, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -442,6 +550,39 @@ func (c *Client) ListActionInvocations(ctx context.Context, all bool, limit int)
 		return nil, err
 	}
 	return out.Invocations, nil
+}
+
+func (c *Client) ListAgents(ctx context.Context) ([]Agent, error) {
+	var out listAgentsResponse
+	if err := c.doJSON(ctx, http.MethodGet, "/v1/operator/agents", nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Agents, nil
+}
+
+func (c *Client) FindAgents(ctx context.Context, req FindAgentsRequest) ([]Agent, error) {
+	var out listAgentsResponse
+	if err := c.doJSON(ctx, http.MethodPost, "/v1/operator/agents/find", req, &out); err != nil {
+		return nil, err
+	}
+	return out.Agents, nil
+}
+
+func (c *Client) GetAgent(ctx context.Context, id string) (*Agent, error) {
+	var out Agent
+	path := "/v1/operator/agents/" + url.PathEscape(strings.TrimSpace(id))
+	if err := c.doJSON(ctx, http.MethodGet, path, nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (c *Client) InstallAgent(ctx context.Context, req InstallAgentRequest) (*Agent, error) {
+	var out Agent
+	if err := c.doJSON(ctx, http.MethodPost, "/v1/operator/agents/install", req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
 }
 
 func (c *Client) doJSON(ctx context.Context, method, path string, reqBody any, respBody any) error {
