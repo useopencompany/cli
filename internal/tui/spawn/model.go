@@ -94,8 +94,6 @@ func newModel(workspace string, client *controlplane.Client, sessionID string, m
 	}
 	if sessionID != "" {
 		startPhase = phaseOperator
-	} else if apiKey != "" {
-		startPhase = phaseProvisionRuntime
 	}
 
 	return Model{
@@ -118,9 +116,9 @@ func newModel(workspace string, client *controlplane.Client, sessionID string, m
 func (m Model) Init() tea.Cmd {
 	switch m.phase {
 	case phaseAPIKeyCheck:
-		return m.createSessionCmd(true)
+		return m.createSessionCmd()
 	case phaseProvisionRuntime:
-		return m.createSessionCmd(false)
+		return m.createSessionCmd()
 	case phaseOperator:
 		return textarea.Blink
 	default:
@@ -172,13 +170,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Key != "" {
 			m.apiKey = msg.Key
 		}
-		if msg.InVault {
-			return m, m.saveAPIKeyToVaultCmd()
-		}
-		if msg.Key != "" {
-			os.Setenv("ANTHROPIC_API_KEY", msg.Key)
-		}
-		return m.advanceAfterAPIKeyReady()
+		return m, m.saveAPIKeyToVaultCmd()
 
 	case apiKeyVaultSavedMsg:
 		if msg.err != nil {
@@ -198,16 +190,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.agentVersion = strings.TrimSpace(msg.session.AgentVersion)
 			}
 		}
-		m.messages = append(m.messages, Message{Role: "system", Content: "Provisioning ap runtime..."})
-		m.viewport.SetContent(m.renderMessages())
-		m.viewport.GotoBottom()
-		return m, m.waitForSessionReadyCmd()
-
-	case sessionReadyMsg:
 		m.phase = phaseOperator
-		readyMsg := "ap runtime ready. Operator is online."
+		readyMsg := "Operator is online."
 		if strings.TrimSpace(m.agentID) != "" {
-			readyMsg = "ap runtime ready. " + m.agentID + " is online."
+			readyMsg = m.agentID + " is online."
 		}
 		m.messages = append(m.messages, Message{Role: "system", Content: readyMsg})
 		m.viewport.SetContent(m.renderMessages())
@@ -253,15 +239,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "failed":
 			m.submitting = false
 			m.activeTurnID = ""
-			if msg.resp.Code == "RECOVERY_KEY_MISSING" {
+			if msg.resp.Code == "MODEL_CREDENTIAL_REQUIRED" {
 				m.awaitingRecoveryKey = true
 				if strings.TrimSpace(m.apiKey) != "" {
-					return m, m.setRecoveryKeyAndRetryCmd(false)
+					return m, m.saveAPIKeyToVaultCmd()
 				}
-				m.messages = append(m.messages, Message{Role: "system", Content: "Recovery needs your Anthropic API key for this older session. Checking ap key vault first."})
+				m.phase = phaseAPIKeySetup
+				m.apiKeyModel = apikey.NewModel(m.keyVaultDocsURL)
+				m.messages = append(m.messages, Message{Role: "system", Content: "This session needs an Anthropic API key saved in the ap vault."})
 				m.viewport.SetContent(m.renderMessages())
 				m.viewport.GotoBottom()
-				return m, m.setRecoveryKeyAndRetryCmd(true)
+				return m, m.apiKeyModel.Init()
 			}
 			m.err = errors.New(msg.resp.Error)
 			m.messages = append(m.messages, Message{Role: "system", Content: "Turn failed: " + msg.resp.Error})
@@ -275,15 +263,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case turnErrorMsg:
 		m.submitting = false
 		m.activeTurnID = ""
-		if apiErr, ok := asAPIError(msg.err); ok && apiErr.Code == "RECOVERY_KEY_MISSING" {
+		if apiErr, ok := asAPIError(msg.err); ok && apiErr.Code == "MODEL_CREDENTIAL_REQUIRED" {
 			m.awaitingRecoveryKey = true
 			if strings.TrimSpace(m.apiKey) != "" {
-				return m, m.setRecoveryKeyAndRetryCmd(false)
+				return m, m.saveAPIKeyToVaultCmd()
 			}
-			m.messages = append(m.messages, Message{Role: "system", Content: "Recovery needs your Anthropic API key for this older session. Checking ap key vault first."})
+			m.phase = phaseAPIKeySetup
+			m.apiKeyModel = apikey.NewModel(m.keyVaultDocsURL)
+			m.messages = append(m.messages, Message{Role: "system", Content: "This session needs an Anthropic API key saved in the ap vault."})
 			m.viewport.SetContent(m.renderMessages())
 			m.viewport.GotoBottom()
-			return m, m.setRecoveryKeyAndRetryCmd(true)
+			return m, m.apiKeyModel.Init()
 		}
 		m.err = msg.err
 		m.messages = append(m.messages, Message{Role: "system", Content: "Turn failed: " + msg.err.Error()})
@@ -343,47 +333,31 @@ func (m Model) advanceAfterAPIKeyReady() (tea.Model, tea.Cmd) {
 	if m.awaitingRecoveryKey && m.sessionID != "" {
 		m.awaitingRecoveryKey = false
 		m.phase = phaseOperator
-		return m, m.setRecoveryKeyAndRetryCmd(false)
+		content := strings.TrimSpace(m.pendingRetryContent)
+		if content != "" {
+			return m, m.submitTurnCmd(content)
+		}
+		return m, nil
 	}
 	m.phase = phaseProvisionRuntime
-	return m, m.createSessionCmd(false)
+	return m, m.createSessionCmd()
 }
 
-func (m Model) createSessionCmd(useAPKeyVault bool) tea.Cmd {
-	apiKey := strings.TrimSpace(m.apiKey)
-	if apiKey == "" && !useAPKeyVault {
-		return func() tea.Msg { return sessionErrorMsg{err: fmt.Errorf("missing ANTHROPIC_API_KEY")} }
-	}
+func (m Model) createSessionCmd() tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
 
 		sess, err := m.api.CreateSession(ctx, controlplane.CreateSessionRequest{
-			AnthropicAPIKey: apiKey,
-			UseAPKeyVault:   useAPKeyVault,
-			AgentID:         strings.TrimSpace(m.agentID),
+			AgentID: strings.TrimSpace(m.agentID),
 		})
 		if err != nil {
-			if useAPKeyVault && isKeyVaultPromptError(err) {
+			if isKeyVaultPromptError(err) {
 				return apiKeyMissingMsg{}
 			}
 			return sessionErrorMsg{err: err}
 		}
 		return sessionCreatedMsg{session: sess}
-	}
-}
-
-func (m Model) waitForSessionReadyCmd() tea.Cmd {
-	sessionID := m.sessionID
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
-		defer cancel()
-
-		_, err := m.api.WaitForSessionReady(ctx, sessionID, 3*time.Minute)
-		if err != nil {
-			return sessionErrorMsg{err: err}
-		}
-		return sessionReadyMsg{}
 	}
 }
 
@@ -415,38 +389,6 @@ func (m Model) saveAPIKeyToVaultCmd() tea.Cmd {
 		defer cancel()
 
 		return apiKeyVaultSavedMsg{err: m.api.SaveAnthropicKeyToVault(ctx, key)}
-	}
-}
-
-func (m Model) setRecoveryKeyAndRetryCmd(useAPKeyVault bool) tea.Cmd {
-	sessionID := m.sessionID
-	key := strings.TrimSpace(m.apiKey)
-	content := strings.TrimSpace(m.pendingRetryContent)
-	return func() tea.Msg {
-		if key == "" && !useAPKeyVault {
-			return turnErrorMsg{err: fmt.Errorf("missing ANTHROPIC_API_KEY")}
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
-		defer cancel()
-
-		if err := m.api.SetRecoveryKey(ctx, sessionID, key, useAPKeyVault); err != nil {
-			if useAPKeyVault && isKeyVaultPromptError(err) {
-				return apiKeyMissingMsg{}
-			}
-			return turnErrorMsg{err: err}
-		}
-		if content == "" {
-			return turnDoneMsg{content: "Recovery key saved. Send your message again."}
-		}
-		wait := false
-		resp, err := m.api.CreateTurn(ctx, sessionID, controlplane.CreateTurnRequest{
-			Content: content,
-			Wait:    &wait,
-		})
-		if err != nil {
-			return turnErrorMsg{err: err}
-		}
-		return turnCreatedMsg{resp: resp}
 	}
 }
 
@@ -494,7 +436,7 @@ func (m Model) View() string {
 		b.WriteString(m.apiKeyModel.View())
 
 	case phaseProvisionRuntime:
-		b.WriteString(systemMsgStyle.Render("\n  Provisioning ap runtime..."))
+		b.WriteString(systemMsgStyle.Render("\n  Starting operator session..."))
 		if m.err != nil {
 			b.WriteString("\n\n")
 			b.WriteString(systemMsgStyle.Render("  Error: " + m.err.Error()))
@@ -510,7 +452,7 @@ func (m Model) View() string {
 		b.WriteString("\n")
 		help := " enter: send • ctrl+c: quit"
 		if m.submitting {
-			help = " waiting for ap runtime response (recovery may take a few minutes)... • ctrl+c: quit"
+			help = " waiting for operator response... • ctrl+c: quit"
 		}
 		b.WriteString(helpStyle.Render(help))
 		if m.err != nil {
@@ -519,7 +461,7 @@ func (m Model) View() string {
 		}
 
 	default:
-		b.WriteString("\n  Checking ap key vault...")
+		b.WriteString("\n  Starting operator session...")
 		if m.err != nil {
 			b.WriteString("\n\n")
 			b.WriteString(systemMsgStyle.Render("  Error: " + m.err.Error()))
@@ -552,7 +494,7 @@ func isKeyVaultPromptError(err error) bool {
 	if !ok {
 		return false
 	}
-	return apiErr.Code == "KEY_VAULT_EMPTY" || apiErr.Code == "KEY_VAULT_INVALID"
+	return apiErr.Code == "KEY_VAULT_EMPTY" || apiErr.Code == "KEY_VAULT_INVALID" || apiErr.Code == "MODEL_CREDENTIAL_REQUIRED"
 }
 
 func (m Model) renderMessages() string {

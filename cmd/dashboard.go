@@ -8,32 +8,22 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"go.agentprotocol.cloud/cli/internal/config"
 )
 
 var dashboardCmd = &cobra.Command{
 	Use:   "dashboard",
 	Short: "Open the web dashboard",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cfg, token, _, err := authenticatedClient()
+		cfg, err := config.Load()
 		if err != nil {
 			return err
 		}
 
-		base := strings.TrimSpace(cfg.DashboardBaseURL)
-		if base == "" {
-			return fmt.Errorf("dashboard_base_url is empty")
-		}
-
-		target, err := url.Parse(strings.TrimRight(base, "/"))
+		target, err := dashboardURL(cfg.DashboardBaseURL)
 		if err != nil {
-			return fmt.Errorf("invalid dashboard URL: %w", err)
+			return err
 		}
-
-		target.Path = strings.TrimRight(target.Path, "/") + "/auth/cli"
-		query := target.Query()
-		query.Set("access_token", token.AccessToken)
-		query.Set("return_to", "/dashboard")
-		target.RawQuery = query.Encode()
 
 		if err := openBrowser(target.String()); err != nil {
 			fmt.Println("Could not open browser automatically.")
@@ -63,4 +53,21 @@ func openBrowser(rawURL string) error {
 		return fmt.Errorf("unsupported platform")
 	}
 	return cmd.Start()
+}
+
+func dashboardURL(base string) (*url.URL, error) {
+	trimmed := strings.TrimSpace(base)
+	if trimmed == "" {
+		return nil, fmt.Errorf("dashboard_base_url is empty")
+	}
+
+	target, err := url.Parse(strings.TrimRight(trimmed, "/"))
+	if err != nil {
+		return nil, fmt.Errorf("invalid dashboard URL: %w", err)
+	}
+
+	target.Path = strings.TrimRight(target.Path, "/") + "/dashboard"
+	target.RawQuery = ""
+	target.Fragment = ""
+	return target, nil
 }

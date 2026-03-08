@@ -3,7 +3,6 @@ package apikey
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -13,7 +12,7 @@ import (
 // DoneMsg is sent when the API key flow completes.
 type DoneMsg struct {
 	Key     string
-	InVault bool // true = stored in ap vault, false = local only.
+	InVault bool
 }
 
 // step tracks where we are in the API key setup flow.
@@ -143,7 +142,6 @@ func (m Model) handleManualEntry(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.key = key
 		m.validErr = ""
 		m.step = stepChooseStorage
-		m.cursor = 0
 		m.storeErr = ""
 	case "backspace":
 		if len(m.input) > 0 {
@@ -166,7 +164,6 @@ func (m Model) handleFoundKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "y", "Y", "enter":
 		m.key = m.foundKey
 		m.step = stepChooseStorage
-		m.cursor = 0
 		m.storeErr = ""
 	case "n", "N":
 		m.manualNotice = ""
@@ -177,16 +174,8 @@ func (m Model) handleFoundKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m Model) handleChooseStorage(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
-	case "up", "k":
-		if m.cursor > 0 {
-			m.cursor--
-		}
-	case "down", "j":
-		if m.cursor < 1 {
-			m.cursor++
-		}
 	case "enter":
-		m.inVault = m.cursor == 0
+		m.inVault = true
 		m.step = stepDone
 		return m, func() tea.Msg {
 			return DoneMsg{Key: m.key, InVault: m.inVault}
@@ -206,67 +195,14 @@ func validateAPIKey(key string) string {
 	return ""
 }
 
-// searchForKey looks for ANTHROPIC_API_KEY in the environment and shell history.
+// searchForKey looks for ANTHROPIC_API_KEY in explicit environment sources only.
 func (m Model) searchForKey() tea.Cmd {
 	return func() tea.Msg {
-		// 1. Check active environment variable.
 		if key := os.Getenv("ANTHROPIC_API_KEY"); key != "" {
 			return searchResultMsg{key: key}
 		}
-
-		// 2. Search shell history files.
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return searchResultMsg{err: err}
-		}
-
-		histFiles := []string{
-			home + "/.bash_history",
-			home + "/.zsh_history",
-		}
-
-		for _, hf := range histFiles {
-			key := searchHistoryFile(hf)
-			if key != "" {
-				return searchResultMsg{key: key}
-			}
-		}
-
-		// 3. Try `printenv` as fallback.
-		out, err := exec.Command("printenv", "ANTHROPIC_API_KEY").Output()
-		if err == nil {
-			key := strings.TrimSpace(string(out))
-			if key != "" {
-				return searchResultMsg{key: key}
-			}
-		}
-
 		return searchResultMsg{}
 	}
-}
-
-func searchHistoryFile(path string) string {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return ""
-	}
-
-	lines := strings.Split(string(data), "\n")
-	// Search backwards for most recent occurrence.
-	for i := len(lines) - 1; i >= 0; i-- {
-		line := lines[i]
-		// Match patterns like: export ANTHROPIC_API_KEY=sk-ant-...
-		if idx := strings.Index(line, "ANTHROPIC_API_KEY="); idx != -1 {
-			val := line[idx+len("ANTHROPIC_API_KEY="):]
-			val = strings.TrimSpace(val)
-			val = strings.Trim(val, `"'`)
-			if strings.HasPrefix(val, "sk-ant-") {
-				return val
-			}
-		}
-	}
-
-	return ""
 }
 
 // View implements tea.Model.
@@ -288,7 +224,7 @@ func (m Model) View() string {
 		b.WriteString("\n\n")
 
 		options := []string{
-			"Search automatically (env vars, shell history)",
+			"Check environment variable",
 			"Enter it manually",
 		}
 		for i, opt := range options {
@@ -313,7 +249,7 @@ func (m Model) View() string {
 			b.WriteString(warnStyle.Render(fmt.Sprintf("  %s", m.manualNotice)))
 			b.WriteString("\n\n")
 		}
-		b.WriteString(fmt.Sprintf("  > %s█", m.input))
+		b.WriteString(fmt.Sprintf("  > %s█", strings.Repeat("•", len(m.input))))
 		b.WriteString("\n")
 		if m.validErr != "" {
 			b.WriteString(errStyle.Render(fmt.Sprintf("    %s", m.validErr)))
@@ -331,48 +267,25 @@ func (m Model) View() string {
 		b.WriteString(dimStyle.Render("  Use this key? (y/n)"))
 
 	case stepChooseStorage:
-		b.WriteString(titleStyle.Render("  Where should this key be stored?"))
+		b.WriteString(titleStyle.Render("  Save this key in the ap vault"))
 		b.WriteString("\n\n")
 
 		if m.storeErr != "" {
 			b.WriteString(errStyle.Render(fmt.Sprintf("  %s", m.storeErr)))
 			b.WriteString("\n\n")
 		}
-
-		options := []string{
-			"ap key vault (recommended)",
-			"Keep locally",
-		}
-		for i, opt := range options {
-			if i == m.cursor {
-				b.WriteString(selectedStyle.Render(fmt.Sprintf("  ▸ %s", opt)))
-			} else {
-				b.WriteString(dimStyle.Render(fmt.Sprintf("    %s", opt)))
-			}
+		b.WriteString(selectedStyle.Render("  ▸ Save to ap key vault"))
+		b.WriteString("\n\n")
+		b.WriteString(dimStyle.Render("  ap stores the key for future sessions without passing it into runtimes."))
+		if m.docsURL != "" {
 			b.WriteString("\n")
-		}
-
-		b.WriteString("\n")
-		if m.cursor == 0 {
-			b.WriteString(dimStyle.Render("  Saved inside Agent Platform so ap can reuse it across sessions."))
-			if m.docsURL != "" {
-				b.WriteString("\n")
-				b.WriteString(dimStyle.Render(fmt.Sprintf("  Docs: %s", m.docsURL)))
-			}
-		} else {
-			b.WriteString(warnStyle.Render("  ⚠ ap will not remember this key across sessions."))
-			b.WriteString("\n")
-			b.WriteString(warnStyle.Render("    The ANTHROPIC_API_KEY env var must be set each time."))
+			b.WriteString(dimStyle.Render(fmt.Sprintf("  Docs: %s", m.docsURL)))
 		}
 		b.WriteString("\n\n")
-		b.WriteString(dimStyle.Render("  ↑/↓ navigate • enter confirm"))
+		b.WriteString(dimStyle.Render("  enter confirm"))
 
 	case stepDone:
-		if m.inVault {
-			b.WriteString(dimStyle.Render("  Saving key to ap key vault..."))
-		} else {
-			b.WriteString(dimStyle.Render("  ✓ Key set for this session."))
-		}
+		b.WriteString(dimStyle.Render("  Saving key to ap key vault..."))
 	}
 
 	return b.String()

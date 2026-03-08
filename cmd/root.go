@@ -27,6 +27,7 @@ var rootCmd = &cobra.Command{
 }
 
 func Execute() error {
+	maybeWarnIfOutdated(os.Stderr)
 	return rootCmd.Execute()
 }
 
