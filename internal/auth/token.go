@@ -74,6 +74,15 @@ func (t *Token) WorkspaceName() string {
 	return "Personal"
 }
 
+// OrganizationID returns the WorkOS organization ID from the token claims.
+func (t *Token) OrganizationID() string {
+	claims, err := t.Claims()
+	if err != nil {
+		return ""
+	}
+	return claims.OrgID
+}
+
 // UserID returns the WorkOS user ID from the token claims.
 func (t *Token) UserID() string {
 	claims, err := t.Claims()
@@ -101,7 +110,7 @@ func EnsureValid(cfg *config.Config) (*Token, error) {
 		return nil, fmt.Errorf("session expired and no refresh token — run 'ap auth login'")
 	}
 
-	refreshed, err := RefreshAccessToken(cfg.WorkOSClientID, token.RefreshToken)
+	refreshed, err := RefreshAccessToken(cfg.WorkOSClientID, token.RefreshToken, "")
 	if err != nil {
 		return nil, fmt.Errorf("token refresh failed — run 'ap auth login': %w", err)
 	}

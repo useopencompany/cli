@@ -27,6 +27,9 @@ var (
 	assistantMsgStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("41")) // Green.
 
+	toolMsgStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("220"))
+
 	systemMsgStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("243")). // Dim gray.
 			Italic(true)

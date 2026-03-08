@@ -1,8 +1,8 @@
 package auth
 
 import (
-	"encoding/base64"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -117,11 +117,14 @@ func DeviceFlow(ctx context.Context, clientID string) (*Token, error) {
 }
 
 // RefreshAccessToken exchanges a refresh token for a new access token.
-func RefreshAccessToken(clientID, refreshToken string) (*Token, error) {
+func RefreshAccessToken(clientID, refreshToken, organizationID string) (*Token, error) {
 	form := url.Values{
 		"grant_type":    {refreshGrantType},
 		"refresh_token": {refreshToken},
 		"client_id":     {clientID},
+	}
+	if strings.TrimSpace(organizationID) != "" {
+		form.Set("organization_id", strings.TrimSpace(organizationID))
 	}
 
 	resp, err := http.Post(workosBaseURL+tokenEndpoint, "application/x-www-form-urlencoded", strings.NewReader(form.Encode()))

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"go.agentprotocol.cloud/cli/internal/controlplane"
@@ -28,13 +29,13 @@ var workspaceListCmd = &cobra.Command{
 			fmt.Println("No workspaces found.")
 			return nil
 		}
-		fmt.Printf("%-44s  %-24s  %-8s  %s\n", "ID", "NAME", "DEFAULT", "ACTIVE")
+		fmt.Printf("%-32s  %-8s  %s\n", "NAME", "DEFAULT", "ACTIVE")
 		for _, ws := range resp.Workspaces {
 			active := ""
 			if ws.ID == resp.ActiveWorkspace.ID {
 				active = "yes"
 			}
-			fmt.Printf("%-44s  %-24s  %-8t  %s\n", ws.ID, ws.Name, ws.IsDefault, active)
+			fmt.Printf("%-32s  %-8t  %s\n", ws.Name, ws.IsDefault, active)
 		}
 		return nil
 	},
@@ -50,20 +51,24 @@ var workspaceCreateCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		if workspaceCreateName == "" {
-			return fmt.Errorf("--name is required")
+		name := strings.TrimSpace(workspaceCreateName)
+		if name == "" {
+			name, err = promptForName("Workspace name")
+			if err != nil {
+				return err
+			}
 		}
-		ws, err := client.CreateWorkspace(cmd.Context(), controlplane.CreateWorkspaceRequest{Name: workspaceCreateName})
+		ws, err := client.CreateWorkspace(cmd.Context(), controlplane.CreateWorkspaceRequest{Name: name})
 		if err != nil {
 			return err
 		}
-		fmt.Printf("Created workspace %s (%s)\n", ws.Name, ws.ID)
+		fmt.Printf("Created workspace %s\n", ws.Name)
 		return nil
 	},
 }
 
 var workspaceSwitchCmd = &cobra.Command{
-	Use:   "switch <workspace-id>",
+	Use:   "switch <workspace>",
 	Short: "Switch active workspace",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -71,11 +76,19 @@ var workspaceSwitchCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		ws, err := client.SwitchWorkspace(cmd.Context(), args[0])
+		resp, err := client.ListWorkspaces(cmd.Context())
 		if err != nil {
 			return err
 		}
-		fmt.Printf("Active workspace: %s (%s)\n", ws.Name, ws.ID)
+		target, err := resolveWorkspace(args[0], resp.Workspaces)
+		if err != nil {
+			return err
+		}
+		ws, err := client.SwitchWorkspace(cmd.Context(), target.ID)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("Active workspace: %s\n", ws.Name)
 		return nil
 	},
 }
@@ -92,9 +105,38 @@ var workspaceShowCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		fmt.Printf("%s (%s)\n", org.ActiveWorkspace.Name, org.ActiveWorkspace.ID)
+		fmt.Println(org.ActiveWorkspace.Name)
 		return nil
 	},
+}
+
+func resolveWorkspace(input string, workspaces []controlplane.Workspace) (*controlplane.Workspace, error) {
+	target := strings.TrimSpace(input)
+	if target == "" {
+		return nil, fmt.Errorf("workspace is required")
+	}
+
+	for _, workspace := range workspaces {
+		if strings.EqualFold(strings.TrimSpace(workspace.ID), target) {
+			match := workspace
+			return &match, nil
+		}
+	}
+
+	var matches []controlplane.Workspace
+	for _, workspace := range workspaces {
+		if strings.EqualFold(strings.TrimSpace(workspace.Name), target) {
+			matches = append(matches, workspace)
+		}
+	}
+	switch len(matches) {
+	case 0:
+		return nil, fmt.Errorf("workspace %q not found", target)
+	case 1:
+		return &matches[0], nil
+	default:
+		return nil, fmt.Errorf("workspace name %q is ambiguous", target)
+	}
 }
 
 func init() {

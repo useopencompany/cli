@@ -45,17 +45,13 @@ func (e *APIError) Error() string {
 }
 
 type Session struct {
-	ID               string    `json:"id"`
-	Status           string    `json:"status"`
-	RuntimeStatus    string    `json:"runtime_status"`
-	RecoveryStatus   string    `json:"recovery_status"`
-	RecoveryError    string    `json:"recovery_error"`
-	RecoveryAttempts int       `json:"recovery_attempts"`
-	Title            string    `json:"title"`
-	AgentID          string    `json:"agent_id"`
-	AgentVersion     string    `json:"agent_version"`
-	CreatedAt        time.Time `json:"created_at"`
-	UpdatedAt        time.Time `json:"updated_at"`
+	ID           string    `json:"id"`
+	Status       string    `json:"status"`
+	Title        string    `json:"title"`
+	AgentID      string    `json:"agent_id"`
+	AgentVersion string    `json:"agent_version"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
 type Message struct {
@@ -67,10 +63,8 @@ type Message struct {
 }
 
 type CreateSessionRequest struct {
-	AnthropicAPIKey string `json:"anthropic_api_key"`
-	UseAPKeyVault   bool   `json:"use_ap_key_vault,omitempty"`
-	Title           string `json:"title,omitempty"`
-	AgentID         string `json:"agent_id,omitempty"`
+	Title   string `json:"title,omitempty"`
+	AgentID string `json:"agent_id,omitempty"`
 }
 
 type CreateTurnRequest struct {
@@ -171,36 +165,33 @@ type SwitchWorkspaceRequest struct {
 }
 
 type IntegrationConnection struct {
-	ID            string    `json:"id"`
-	OrgID         string    `json:"org_id"`
-	WorkspaceID   string    `json:"workspace_id"`
-	OwnerUserSub  string    `json:"owner_user_sub"`
-	Scope         string    `json:"scope"`
-	Integration   string    `json:"integration"`
-	Provider      string    `json:"provider"`
-	CredentialRef string    `json:"credential_ref"`
-	Status        string    `json:"status"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	ID           string    `json:"id"`
+	OrgID        string    `json:"org_id"`
+	WorkspaceID  string    `json:"workspace_id"`
+	OwnerUserSub string    `json:"owner_user_sub"`
+	Scope        string    `json:"scope"`
+	Integration  string    `json:"integration"`
+	Provider     string    `json:"provider"`
+	Status       string    `json:"status"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
 type CreateIntegrationConnectionRequest struct {
-	Integration   string            `json:"integration"`
-	Provider      string            `json:"provider"`
-	Scope         string            `json:"scope"`
-	WorkspaceID   string            `json:"workspace_id,omitempty"`
-	CredentialRef string            `json:"credential_ref,omitempty"`
-	Credentials   map[string]string `json:"credentials"`
+	Integration string            `json:"integration"`
+	Provider    string            `json:"provider"`
+	Scope       string            `json:"scope"`
+	WorkspaceID string            `json:"workspace_id,omitempty"`
+	Credentials map[string]string `json:"credentials"`
 }
 
 type UpdateIntegrationConnectionRequest struct {
-	Integration   *string           `json:"integration,omitempty"`
-	Provider      *string           `json:"provider,omitempty"`
-	Scope         *string           `json:"scope,omitempty"`
-	WorkspaceID   *string           `json:"workspace_id,omitempty"`
-	CredentialRef *string           `json:"credential_ref,omitempty"`
-	Status        *string           `json:"status,omitempty"`
-	Credentials   map[string]string `json:"credentials,omitempty"`
+	Integration *string           `json:"integration,omitempty"`
+	Provider    *string           `json:"provider,omitempty"`
+	Scope       *string           `json:"scope,omitempty"`
+	WorkspaceID *string           `json:"workspace_id,omitempty"`
+	Status      *string           `json:"status,omitempty"`
+	Credentials map[string]string `json:"credentials,omitempty"`
 }
 
 type ListIntegrationConnectionsResponse struct {
@@ -243,26 +234,49 @@ type ExecuteActionResponse struct {
 }
 
 type ActionInvocation struct {
-	ID             string          `json:"id"`
-	SessionID      string          `json:"session_id"`
-	OrgID          string          `json:"org_id"`
-	WorkspaceID    string          `json:"workspace_id"`
-	UserSub        string          `json:"user_sub"`
-	Action         string          `json:"action"`
-	Resource       string          `json:"resource"`
-	ConnectionID   string          `json:"connection_id"`
-	PermissionUsed string          `json:"permission_used"`
-	Status         string          `json:"status"`
-	DurationMS     int64           `json:"duration_ms"`
-	Cost           string          `json:"cost"`
-	Error          string          `json:"error"`
-	CreatedAt      time.Time       `json:"created_at"`
-	Request        json.RawMessage `json:"sanitized_request"`
-	Response       json.RawMessage `json:"sanitized_response"`
+	ID             string    `json:"id"`
+	SessionID      string    `json:"session_id"`
+	OrgID          string    `json:"org_id"`
+	WorkspaceID    string    `json:"workspace_id"`
+	UserSub        string    `json:"user_sub"`
+	Action         string    `json:"action"`
+	Resource       string    `json:"resource"`
+	ConnectionID   string    `json:"connection_id"`
+	PermissionUsed string    `json:"permission_used"`
+	Status         string    `json:"status"`
+	DurationMS     int64     `json:"duration_ms"`
+	Cost           string    `json:"cost"`
+	InputKeys      []string  `json:"input_keys"`
+	Error          string    `json:"error"`
+	CreatedAt      time.Time `json:"created_at"`
 }
 
 type ListActionInvocationsResponse struct {
 	Invocations []ActionInvocation `json:"invocations"`
+}
+
+type PermissionGrant struct {
+	ID          string    `json:"id"`
+	OrgID       string    `json:"org_id"`
+	WorkspaceID string    `json:"workspace_id"`
+	SubjectType string    `json:"subject_type"`
+	SubjectID   string    `json:"subject_id"`
+	Action      string    `json:"action"`
+	Resource    string    `json:"resource"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+type ListPermissionGrantsResponse struct {
+	Grants []PermissionGrant `json:"grants"`
+}
+
+type GrantPermissionRequest struct {
+	WorkspaceID string `json:"workspace_id,omitempty"`
+	SubjectType string `json:"subject_type"`
+	SubjectID   string `json:"subject_id"`
+	Action      string `json:"action"`
+	Resource    string `json:"resource"`
 }
 
 type AgentReadiness struct {
@@ -356,16 +370,6 @@ func (c *Client) SaveAnthropicKeyToVault(ctx context.Context, key string) error 
 	}, nil)
 }
 
-func (c *Client) SetRecoveryKey(ctx context.Context, sessionID, key string, useAPKeyVault bool) error {
-	req := map[string]any{
-		"anthropic_api_key": key,
-	}
-	if useAPKeyVault {
-		req["use_ap_key_vault"] = true
-	}
-	return c.doJSON(ctx, http.MethodPost, "/v1/operator/sessions/"+sessionID+"/recovery-key", req, nil)
-}
-
 func (c *Client) WaitForSessionReady(ctx context.Context, sessionID string, timeout time.Duration) (*Session, error) {
 	deadline := time.NewTimer(timeout)
 	defer deadline.Stop()
@@ -375,18 +379,18 @@ func (c *Client) WaitForSessionReady(ctx context.Context, sessionID string, time
 	for {
 		session, _, err := c.GetSession(ctx, sessionID)
 		if err == nil {
-			if session.Status == "ready" && session.RuntimeStatus == "ready" {
+			if session.Status == "ready" {
 				return session, nil
 			}
 			if session.Status == "failed" {
-				return nil, fmt.Errorf("session provisioning failed")
+				return nil, fmt.Errorf("session startup failed")
 			}
 		}
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		case <-deadline.C:
-			return nil, fmt.Errorf("session provisioning timed out")
+			return nil, fmt.Errorf("session startup timed out")
 		case <-ticker.C:
 		}
 	}
@@ -496,6 +500,40 @@ func (c *Client) UpdateIntegrationConnection(ctx context.Context, id string, req
 
 func (c *Client) DeleteIntegrationConnection(ctx context.Context, id string) error {
 	return c.doJSON(ctx, http.MethodDelete, "/v1/operator/integrations/connections/"+id, nil, nil)
+}
+
+func (c *Client) ListPermissionGrants(ctx context.Context, workspaceID, subjectType, subjectID string) ([]PermissionGrant, error) {
+	path := "/v1/operator/permissions/grants"
+	query := make([]string, 0, 3)
+	if strings.TrimSpace(workspaceID) != "" {
+		query = append(query, "workspace_id="+urlQueryEscape(workspaceID))
+	}
+	if strings.TrimSpace(subjectType) != "" {
+		query = append(query, "subject_type="+urlQueryEscape(subjectType))
+	}
+	if strings.TrimSpace(subjectID) != "" {
+		query = append(query, "subject_id="+urlQueryEscape(subjectID))
+	}
+	if len(query) > 0 {
+		path += "?" + strings.Join(query, "&")
+	}
+	var out ListPermissionGrantsResponse
+	if err := c.doJSON(ctx, http.MethodGet, path, nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Grants, nil
+}
+
+func (c *Client) GrantPermission(ctx context.Context, req GrantPermissionRequest) (*PermissionGrant, error) {
+	var out PermissionGrant
+	if err := c.doJSON(ctx, http.MethodPost, "/v1/operator/permissions/grants", req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (c *Client) RevokePermission(ctx context.Context, id string) error {
+	return c.doJSON(ctx, http.MethodDelete, "/v1/operator/permissions/grants/"+id, nil, nil)
 }
 
 func (c *Client) ListActions(ctx context.Context, integration, provider string) ([]Action, error) {

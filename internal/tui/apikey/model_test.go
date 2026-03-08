@@ -28,7 +28,7 @@ func TestChooseStorageDefaultsToKeyVault(t *testing.T) {
 	}
 }
 
-func TestChooseStorageCanSwitchToLocal(t *testing.T) {
+func TestChooseStorageAlwaysSavesToVault(t *testing.T) {
 	model := NewStorageModel(testAnthropicKey, "https://agentplatform.cloud/docs/architecture", "")
 
 	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyDown})
@@ -43,8 +43,8 @@ func TestChooseStorageCanSwitchToLocal(t *testing.T) {
 	if next.step != stepDone {
 		t.Fatalf("expected stepDone, got %v", next.step)
 	}
-	if done.InVault {
-		t.Fatalf("expected local storage after moving selection down")
+	if !done.InVault {
+		t.Fatalf("expected the key to be saved in the vault")
 	}
 }
 

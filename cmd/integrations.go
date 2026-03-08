@@ -1,11 +1,15 @@
 package cmd
 
 import (
+	"bufio"
 	"fmt"
+	"io"
+	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
 	"go.agentprotocol.cloud/cli/internal/controlplane"
+	"golang.org/x/term"
 )
 
 var integrationsCmd = &cobra.Command{
@@ -14,13 +18,12 @@ var integrationsCmd = &cobra.Command{
 }
 
 var (
-	connectIntegration   string
-	connectProvider      string
-	connectScope         string
-	connectWorkspaceID   string
-	connectCredentialRef string
-	connectCredentials   []string
-	connectToken         string
+	connectIntegration    string
+	connectProvider       string
+	connectScope          string
+	connectWorkspaceID    string
+	connectTokenStdin     bool
+	connectCredentialsIn  bool
 )
 
 var integrationsConnectCmd = &cobra.Command{
@@ -34,6 +37,10 @@ var integrationsConnectCmd = &cobra.Command{
 		if strings.TrimSpace(connectIntegration) == "" {
 			return fmt.Errorf("--integration is required")
 		}
+		if connectTokenStdin && connectCredentialsIn {
+			return fmt.Errorf("--token-stdin and --credentials-stdin cannot be combined")
+		}
+
 		integration := strings.TrimSpace(connectIntegration)
 		provider := strings.TrimSpace(connectProvider)
 		if provider == "" {
@@ -43,27 +50,38 @@ var integrationsConnectCmd = &cobra.Command{
 			return fmt.Errorf("--provider is required")
 		}
 
-		credentials, err := parseCredentials(connectCredentials)
+		var credentials map[string]string
+		switch {
+		case connectCredentialsIn:
+			credentials, err = parseCredentialsReader(os.Stdin)
+		case connectTokenStdin:
+			token, readErr := readSingleSecret(os.Stdin)
+			err = readErr
+			if err == nil {
+				credentials = map[string]string{defaultTokenKey(provider, integration): token}
+			}
+		default:
+			key := defaultTokenKey(provider, integration)
+			token, readErr := promptSecret(cmd, "Enter "+key)
+			err = readErr
+			if err == nil {
+				credentials = map[string]string{key: token}
+			}
+		}
 		if err != nil {
 			return err
 		}
-		if strings.TrimSpace(connectToken) != "" {
-			key := defaultTokenKey(provider, integration)
-			credentials[key] = strings.TrimSpace(connectToken)
-		}
 		if len(credentials) == 0 {
-			return fmt.Errorf("at least one credential is required (--credential KEY=VALUE or --token)")
+			return fmt.Errorf("credentials are required")
 		}
 
-		req := controlplane.CreateIntegrationConnectionRequest{
-			Integration:   integration,
-			Provider:      provider,
-			Scope:         strings.TrimSpace(connectScope),
-			WorkspaceID:   strings.TrimSpace(connectWorkspaceID),
-			CredentialRef: strings.TrimSpace(connectCredentialRef),
-			Credentials:   credentials,
-		}
-		conn, err := client.CreateIntegrationConnection(cmd.Context(), req)
+		conn, err := client.CreateIntegrationConnection(cmd.Context(), controlplane.CreateIntegrationConnectionRequest{
+			Integration: integration,
+			Provider:    provider,
+			Scope:       strings.TrimSpace(connectScope),
+			WorkspaceID: strings.TrimSpace(connectWorkspaceID),
+			Credentials: credentials,
+		})
 		if err != nil {
 			return err
 		}
@@ -160,10 +178,11 @@ func defaultTokenKey(provider, integration string) string {
 	}
 }
 
-func parseCredentials(values []string) (map[string]string, error) {
+func parseCredentialsReader(r io.Reader) (map[string]string, error) {
 	out := map[string]string{}
-	for _, value := range values {
-		item := strings.TrimSpace(value)
+	scanner := bufio.NewScanner(r)
+	for scanner.Scan() {
+		item := strings.TrimSpace(scanner.Text())
 		if item == "" {
 			continue
 		}
@@ -178,7 +197,40 @@ func parseCredentials(values []string) (map[string]string, error) {
 		}
 		out[key] = val
 	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
 	return out, nil
+}
+
+func readSingleSecret(r io.Reader) (string, error) {
+	raw, err := io.ReadAll(r)
+	if err != nil {
+		return "", err
+	}
+	secret := strings.TrimSpace(string(raw))
+	if secret == "" {
+		return "", fmt.Errorf("stdin did not contain a secret")
+	}
+	return secret, nil
+}
+
+func promptSecret(cmd *cobra.Command, prompt string) (string, error) {
+	fd := int(os.Stdin.Fd())
+	if !term.IsTerminal(fd) {
+		return "", fmt.Errorf("stdin is not a terminal; use --token-stdin or --credentials-stdin")
+	}
+	fmt.Fprintf(cmd.ErrOrStderr(), "%s: ", prompt)
+	raw, err := term.ReadPassword(fd)
+	fmt.Fprintln(cmd.ErrOrStderr())
+	if err != nil {
+		return "", err
+	}
+	secret := strings.TrimSpace(string(raw))
+	if secret == "" {
+		return "", fmt.Errorf("secret is required")
+	}
+	return secret, nil
 }
 
 func init() {
@@ -186,9 +238,8 @@ func init() {
 	integrationsConnectCmd.Flags().StringVar(&connectProvider, "provider", "", "Provider key (linear|slack|gws)")
 	integrationsConnectCmd.Flags().StringVar(&connectScope, "scope", "user_private_workspace", "Scope (org_shared|workspace_shared|user_private_workspace)")
 	integrationsConnectCmd.Flags().StringVar(&connectWorkspaceID, "workspace-id", "", "Workspace ID for workspace/user-private scopes")
-	integrationsConnectCmd.Flags().StringVar(&connectCredentialRef, "credential-ref", "", "External credential reference")
-	integrationsConnectCmd.Flags().StringArrayVar(&connectCredentials, "credential", nil, "Credential KEY=VALUE (repeatable)")
-	integrationsConnectCmd.Flags().StringVar(&connectToken, "token", "", "Convenience token value mapped to provider-specific credential key")
+	integrationsConnectCmd.Flags().BoolVar(&connectTokenStdin, "token-stdin", false, "Read a single provider token from stdin")
+	integrationsConnectCmd.Flags().BoolVar(&connectCredentialsIn, "credentials-stdin", false, "Read KEY=VALUE credential lines from stdin")
 
 	integrationsListCmd.Flags().StringVar(&listIntegration, "integration", "", "Filter by integration")
 	integrationsListCmd.Flags().StringVar(&listProvider, "provider", "", "Filter by provider")

@@ -1,11 +1,14 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"go.agentprotocol.cloud/cli/internal/auth"
 	"go.agentprotocol.cloud/cli/internal/config"
+	"go.agentprotocol.cloud/cli/internal/controlplane"
 )
 
 var authCmd = &cobra.Command{
@@ -29,18 +32,28 @@ var authLoginCmd = &cobra.Command{
 			return fmt.Errorf("authentication failed: %w", err)
 		}
 
+		token, err = ensureNamedPersonalWorkspace(cmd.Context(), cfg, token)
+		if err != nil {
+			return err
+		}
+
 		if err := auth.SaveToken(token); err != nil {
 			return fmt.Errorf("saving credentials: %w", err)
 		}
 
 		fmt.Println("\n✓ Authenticated successfully.")
 
-		// Show user info from token claims.
-		if userID := token.UserID(); userID != "" {
+		info := currentOrgInfo(cmd.Context(), cfg, token)
+		if displayName := strings.TrimSpace(info.UserDisplayName); displayName != "" {
+			fmt.Printf("  User:      %s\n", displayName)
+		} else if userID := token.UserID(); userID != "" {
 			fmt.Printf("  User:      %s\n", userID)
 		}
-		if ws := token.WorkspaceName(); ws != "" {
-			fmt.Printf("  Workspace: %s\n", ws)
+		if orgName := strings.TrimSpace(info.OrgName); orgName != "" {
+			fmt.Printf("  Org:       %s\n", orgName)
+		}
+		if workspaceName := strings.TrimSpace(info.ActiveWorkspace.Name); workspaceName != "" {
+			fmt.Printf("  Workspace: %s\n", workspaceName)
 		}
 
 		return nil
@@ -75,12 +88,19 @@ var authStatusCmd = &cobra.Command{
 			return nil
 		}
 
+		info := currentOrgInfo(cmd.Context(), cfg, token)
+
 		fmt.Println("✓ Authenticated")
-		if userID := token.UserID(); userID != "" {
+		if displayName := strings.TrimSpace(info.UserDisplayName); displayName != "" {
+			fmt.Printf("  User:      %s\n", displayName)
+		} else if userID := token.UserID(); userID != "" {
 			fmt.Printf("  User:      %s\n", userID)
 		}
-		if ws := token.WorkspaceName(); ws != "" {
-			fmt.Printf("  Workspace: %s\n", ws)
+		if orgName := strings.TrimSpace(info.OrgName); orgName != "" {
+			fmt.Printf("  Org:       %s\n", orgName)
+		}
+		if workspaceName := strings.TrimSpace(info.ActiveWorkspace.Name); workspaceName != "" {
+			fmt.Printf("  Workspace: %s\n", workspaceName)
 		}
 		fmt.Printf("  Expires:   %s\n", token.ExpiresAt.Format("2006-01-02 15:04:05"))
 
@@ -93,4 +113,73 @@ func init() {
 	authCmd.AddCommand(authLogoutCmd)
 	authCmd.AddCommand(authStatusCmd)
 	rootCmd.AddCommand(authCmd)
+}
+
+func ensureNamedPersonalWorkspace(ctx context.Context, cfg *config.Config, token *auth.Token) (*auth.Token, error) {
+	if token == nil {
+		return nil, fmt.Errorf("missing token")
+	}
+	if token.OrganizationID() != "" {
+		info := currentOrgInfo(ctx, cfg, token)
+		if strings.TrimSpace(info.UserDisplayName) == "" && shouldPromptForDisplayName(info.OrgName, info.OrgID) {
+			displayName, err := promptForName("What should we call your personal Workspace")
+			if err != nil {
+				return nil, fmt.Errorf("reading display name: %w", err)
+			}
+
+			client := controlplane.NewClient(cfg.ControlPlaneBaseURL, token.AccessToken)
+			bootstrap, err := client.Bootstrap(ctx, controlplane.BootstrapRequest{DisplayName: displayName})
+			if err != nil {
+				return nil, fmt.Errorf("updating personal Workspace: %w", err)
+			}
+			if bootstrap.OrganizationID != "" && bootstrap.OrganizationID != token.OrganizationID() {
+				refreshed, err := auth.RefreshAccessToken(cfg.WorkOSClientID, token.RefreshToken, bootstrap.OrganizationID)
+				if err != nil {
+					return nil, fmt.Errorf("switching into %s: %w", bootstrap.OrganizationName, err)
+				}
+				return refreshed, nil
+			}
+		}
+		return token, nil
+	}
+
+	displayName, err := promptForName("What should we call your personal Workspace")
+	if err != nil {
+		return nil, fmt.Errorf("reading display name: %w", err)
+	}
+
+	client := controlplane.NewClient(cfg.ControlPlaneBaseURL, token.AccessToken)
+	bootstrap, err := client.Bootstrap(ctx, controlplane.BootstrapRequest{DisplayName: displayName})
+	if err != nil {
+		return nil, fmt.Errorf("creating personal Workspace: %w", err)
+	}
+
+	refreshed, err := auth.RefreshAccessToken(cfg.WorkOSClientID, token.RefreshToken, bootstrap.OrganizationID)
+	if err != nil {
+		return nil, fmt.Errorf("switching into %s: %w", bootstrap.OrganizationName, err)
+	}
+	return refreshed, nil
+}
+
+func currentOrgInfo(ctx context.Context, cfg *config.Config, token *auth.Token) *controlplane.OrgInfo {
+	if cfg == nil || token == nil || strings.TrimSpace(token.AccessToken) == "" || token.OrganizationID() == "" {
+		return &controlplane.OrgInfo{}
+	}
+	client := controlplane.NewClient(cfg.ControlPlaneBaseURL, token.AccessToken)
+	info, err := client.GetOrg(ctx)
+	if err != nil {
+		return &controlplane.OrgInfo{}
+	}
+	return info
+}
+
+func shouldPromptForDisplayName(orgName, orgID string) bool {
+	name := strings.TrimSpace(orgName)
+	if name == "" {
+		return true
+	}
+	if strings.EqualFold(name, strings.TrimSpace(orgID)) {
+		return true
+	}
+	return strings.HasSuffix(strings.ToLower(name), " personal")
 }
