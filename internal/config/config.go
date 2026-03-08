@@ -12,7 +12,7 @@ const (
 
 	// DefaultWorkOSClientID is the production WorkOS client ID shared across
 	// dev and production environments (see opencompany AGENTS.md).
-	DefaultWorkOSClientID = "client_01KH38V2H563FEHATV5F0AS5SX"
+	DefaultWorkOSClientID = "client_01KH38V370P81BFBSTPXGRZ82B"
 
 	// DefaultWorkOSAuthDomain is the custom AuthKit domain. Both staging and
 	// production JWTs use this as the issuer (verified empirically).
