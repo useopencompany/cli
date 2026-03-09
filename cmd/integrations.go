@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -18,12 +19,12 @@ var integrationsCmd = &cobra.Command{
 }
 
 var (
-	connectIntegration    string
-	connectProvider       string
-	connectScope          string
-	connectWorkspaceID    string
-	connectTokenStdin     bool
-	connectCredentialsIn  bool
+	connectIntegration   string
+	connectProvider      string
+	connectScope         string
+	connectWorkspaceID   string
+	connectTokenStdin    bool
+	connectCredentialsIn bool
 )
 
 var integrationsConnectCmd = &cobra.Command{
@@ -74,12 +75,16 @@ var integrationsConnectCmd = &cobra.Command{
 		if len(credentials) == 0 {
 			return fmt.Errorf("credentials are required")
 		}
+		workspaceID, err := resolveConnectWorkspaceID(cmd.Context(), client, connectScope, connectWorkspaceID)
+		if err != nil {
+			return err
+		}
 
 		conn, err := client.CreateIntegrationConnection(cmd.Context(), controlplane.CreateIntegrationConnectionRequest{
 			Integration: integration,
 			Provider:    provider,
 			Scope:       strings.TrimSpace(connectScope),
-			WorkspaceID: strings.TrimSpace(connectWorkspaceID),
+			WorkspaceID: workspaceID,
 			Credentials: credentials,
 		})
 		if err != nil {
@@ -233,11 +238,46 @@ func promptSecret(cmd *cobra.Command, prompt string) (string, error) {
 	return secret, nil
 }
 
+func resolveConnectWorkspaceID(ctx context.Context, client *controlplane.Client, scope, workspaceID string) (string, error) {
+	trimmedID := strings.TrimSpace(workspaceID)
+	if trimmedID != "" || !connectScopeRequiresWorkspace(scope) {
+		return trimmedID, nil
+	}
+	if client == nil {
+		return "", fmt.Errorf("control plane client is required")
+	}
+	info, err := client.GetOrg(ctx)
+	if err != nil {
+		return "", err
+	}
+	return connectWorkspaceIDForScope(scope, "", &info.ActiveWorkspace)
+}
+
+func connectScopeRequiresWorkspace(scope string) bool {
+	switch strings.TrimSpace(scope) {
+	case "workspace_shared", "user_private_workspace":
+		return true
+	default:
+		return false
+	}
+}
+
+func connectWorkspaceIDForScope(scope, workspaceID string, active *controlplane.Workspace) (string, error) {
+	trimmedID := strings.TrimSpace(workspaceID)
+	if trimmedID != "" || !connectScopeRequiresWorkspace(scope) {
+		return trimmedID, nil
+	}
+	if active == nil || strings.TrimSpace(active.ID) == "" {
+		return "", fmt.Errorf("active workspace could not be determined; pass --workspace-id explicitly")
+	}
+	return strings.TrimSpace(active.ID), nil
+}
+
 func init() {
 	integrationsConnectCmd.Flags().StringVar(&connectIntegration, "integration", "", "Integration key (linear|slack|google-workspace|gmail|google-calendar|google-drive)")
 	integrationsConnectCmd.Flags().StringVar(&connectProvider, "provider", "", "Provider key (linear|slack|gws)")
 	integrationsConnectCmd.Flags().StringVar(&connectScope, "scope", "user_private_workspace", "Scope (org_shared|workspace_shared|user_private_workspace)")
-	integrationsConnectCmd.Flags().StringVar(&connectWorkspaceID, "workspace-id", "", "Workspace ID for workspace/user-private scopes")
+	integrationsConnectCmd.Flags().StringVar(&connectWorkspaceID, "workspace-id", "", "Workspace ID for workspace/user-private scopes (defaults to active workspace)")
 	integrationsConnectCmd.Flags().BoolVar(&connectTokenStdin, "token-stdin", false, "Read a single provider token from stdin")
 	integrationsConnectCmd.Flags().BoolVar(&connectCredentialsIn, "credentials-stdin", false, "Read KEY=VALUE credential lines from stdin")
 
