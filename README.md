@@ -1,69 +1,11 @@
 # Agent Platform CLI
 
-Command-line interface for [Agent Platform](https://agentplatform.cloud).
+`ap` is the terminal client for Agent Platform. It handles WorkOS sign-in, personal and team workspace context, the Operator TUI, agent installs, and the control-plane surfaces for integrations, permissions, and gateway actions. User-facing docs live at [docs.agentplatform.cloud](https://docs.agentplatform.cloud).
 
-## Install
+## Developer Notes
 
-```sh
-curl -fsSL https://agentplatform.cloud/install.sh | sh
-```
-
-## Usage
-
-```sh
-ap --help
-```
-
-## Core session workflows
-
-Authenticate once:
-
-```sh
-ap auth login
-```
-
-Start a new Operator session:
-
-```sh
-ap spawn
-```
-
-List resumable sessions:
-
-```sh
-ap sessions
-```
-
-Resume a previous session:
-
-```sh
-ap session <ID>
-```
-
-When resuming older sessions, runtime recovery can happen automatically on turn execution. If key material is missing, the TUI prompts for an Anthropic key and retries the pending turn.
-
-## Organization and integrations
-
-```sh
-ap org
-ap org invite --email teammate@example.com
-
-ap workspace list
-ap workspace create --name "Product"
-ap workspace switch <WORKSPACE_ID>
-
-ap integrations connect --integration slack --scope user_private_workspace --token xoxb-...
-ap integrations list
-ap integrations revoke <CONNECTION_ID>
-
-ap actions
-ap find slack
-ap do slack.channels.list --input limit=20
-ap actions invocations
-
-ap dashboard
-```
-
-## Docs
-
-Full documentation at [docs.agentplatform.cloud](https://docs.agentplatform.cloud).
+- `cmd/` is the Cobra command tree.
+- `internal/tui/` contains the Bubble Tea flows for spawn, resume, and API key setup.
+- `internal/controlplane/` is the typed client for the Go control plane API.
+- Local state lives in `~/.config/ap/config.json` and `~/.config/ap/credentials.json`.
+- Build with `make build`, install with `make install`, and run tests with `go test ./...`.
