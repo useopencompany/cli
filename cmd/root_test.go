@@ -85,6 +85,21 @@ func TestSilenceUsageSet(t *testing.T) {
 	}
 }
 
+func TestDoCmdBodyFlagExists(t *testing.T) {
+	f := doCmd.Flags().Lookup("body")
+	if f == nil {
+		t.Fatal("expected --body flag to be registered on doCmd")
+	}
+}
+
+func TestDoCmdNoLocalJSONFlag(t *testing.T) {
+	// doCmd should NOT have a local --json flag; the persistent --json from root is separate
+	f := doCmd.Flags().Lookup("json")
+	if f != nil {
+		t.Fatal("expected doCmd to NOT have a local --json flag (should use --body instead)")
+	}
+}
+
 func TestResolvedVersionPrefersInjectedVersion(t *testing.T) {
 	originalVersion := version
 	originalReadBuildInfo := readBuildInfo
