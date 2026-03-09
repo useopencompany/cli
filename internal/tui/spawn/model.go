@@ -201,7 +201,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, textarea.Blink
 
 	case sessionErrorMsg:
-		m.err = msg.err
+		m.err = friendlySessionError(msg.err)
 		return m, nil
 
 	case turnDoneMsg:
@@ -495,6 +495,20 @@ func isKeyVaultPromptError(err error) bool {
 		return false
 	}
 	return apiErr.Code == "KEY_VAULT_EMPTY" || apiErr.Code == "KEY_VAULT_INVALID" || apiErr.Code == "MODEL_CREDENTIAL_REQUIRED"
+}
+
+func friendlySessionError(err error) error {
+	apiErr, ok := asAPIError(err)
+	if !ok {
+		return err
+	}
+	switch apiErr.Code {
+	case "AGENT_NOT_INSTALLED", "AGENT_VERSION_MISMATCH", "AGENT_NOT_READY":
+		if strings.TrimSpace(apiErr.Msg) != "" {
+			return errors.New(apiErr.Msg)
+		}
+	}
+	return err
 }
 
 func (m Model) renderMessages() string {

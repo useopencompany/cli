@@ -95,7 +95,7 @@ var agentsInstallCmd = &cobra.Command{
 		}
 		fmt.Printf("Installed %s (%s)\n\n", agent.ID, agent.InstalledVersion)
 		printAgentDetails(agent)
-		fmt.Printf("\nNext: ap spawn --agent %s\n", agent.ID)
+		fmt.Printf("\nNext: %s\n", agentInstallNextStep(agent))
 		return nil
 	},
 }
@@ -159,4 +159,14 @@ func agentReady(agent controlplane.Agent) bool {
 		len(agent.Readiness.MissingConnections) == 0 &&
 		len(agent.Readiness.MissingPermissions) == 0 &&
 		(strings.TrimSpace(agent.InstalledVersion) == "" || strings.TrimSpace(agent.InstalledVersion) == strings.TrimSpace(agent.Version))
+}
+
+func agentInstallNextStep(agent *controlplane.Agent) string {
+	if agent == nil {
+		return "ap agents list"
+	}
+	if agentReady(*agent) {
+		return "ap spawn --agent " + agent.ID
+	}
+	return "connect the missing integrations/permissions above, then run ap agents show " + agent.ID
 }
