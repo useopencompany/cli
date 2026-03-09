@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"go.agentprotocol.cloud/cli/internal/output"
 )
 
 var (
@@ -17,6 +18,8 @@ var (
 	osArgs        = os.Args
 )
 
+var jsonOutput bool
+
 var rootCmd = &cobra.Command{
 	Use:   "ap",
 	Short: "Agent Protocol CLI",
@@ -24,14 +27,33 @@ var rootCmd = &cobra.Command{
 	CompletionOptions: cobra.CompletionOptions{
 		HiddenDefaultCmd: true,
 	},
+	SilenceErrors: true,
+	SilenceUsage:  true,
 }
 
+// isJSONOutput returns true when the --json flag was explicitly set by the user.
+func isJSONOutput() bool {
+	f := rootCmd.PersistentFlags().Lookup("json")
+	return f != nil && f.Changed
+}
+
+// Execute runs the root command. When --json is active and the command errors,
+// a structured JSON error is written to stderr and the process exits non-zero.
 func Execute() error {
 	maybeWarnIfOutdated(os.Stderr)
-	return rootCmd.Execute()
+	err := rootCmd.Execute()
+	if err != nil && isJSONOutput() {
+		output.ErrorJSON(os.Stderr, err)
+		os.Exit(1)
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %s\n", err)
+	}
+	return err
 }
 
 func init() {
+	rootCmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "Output results as JSON")
 	rootCmd.AddCommand(versionCmd)
 }
 
