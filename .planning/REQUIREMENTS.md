@@ -7,21 +7,21 @@
 
 ### Output Infrastructure
 
-- [ ] **OUT-01**: All non-auth commands accept a `--json` boolean flag
+- [x] **OUT-01**: All non-auth commands accept a `--json` boolean flag
 - [x] **OUT-02**: When `--json` is passed, command outputs valid JSON to stdout
 - [x] **OUT-03**: List commands output JSON arrays; single-item commands output JSON objects
 - [x] **OUT-04**: Empty collections output `[]` (not `null`)
-- [ ] **OUT-05**: No human-readable text (fmt.Printf) leaks to stdout when `--json` is active
+- [x] **OUT-05**: No human-readable text (fmt.Printf) leaks to stdout when `--json` is active
 
 ### Error Handling
 
 - [x] **ERR-01**: When `--json` is active, errors output structured JSON to stderr
-- [ ] **ERR-02**: Non-zero exit codes are preserved for error cases under `--json`
+- [x] **ERR-02**: Non-zero exit codes are preserved for error cases under `--json`
 
 ### Compatibility
 
-- [ ] **COMPAT-01**: Default output (no `--json`) remains unchanged for all commands
-- [ ] **COMPAT-02**: `actions do --json` flag collision is resolved before adding output `--json` to actions commands
+- [x] **COMPAT-01**: Default output (no `--json`) remains unchanged for all commands
+- [x] **COMPAT-02**: `actions do --json` flag collision is resolved before adding output `--json` to actions commands
 
 ### Commands
 
@@ -64,15 +64,15 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| OUT-01 | Phase 1 | Pending |
+| OUT-01 | Phase 1 | Complete |
 | OUT-02 | Phase 1 | Complete |
 | OUT-03 | Phase 1 | Complete |
 | OUT-04 | Phase 1 | Complete |
-| OUT-05 | Phase 1 | Pending |
+| OUT-05 | Phase 1 | Complete |
 | ERR-01 | Phase 1 | Complete |
-| ERR-02 | Phase 1 | Pending |
-| COMPAT-01 | Phase 1 | Pending |
-| COMPAT-02 | Phase 1 | Pending |
+| ERR-02 | Phase 1 | Complete |
+| COMPAT-01 | Phase 1 | Complete |
+| COMPAT-02 | Phase 1 | Complete |
 | CMD-01 | Phase 2 | Pending |
 | CMD-02 | Phase 2 | Pending |
 | CMD-03 | Phase 2 | Pending |

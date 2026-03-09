@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 01-01-PLAN.md
-last_updated: "2026-03-09T13:43:30Z"
-last_activity: 2026-03-09 -- Completed output helpers plan
+stopped_at: Completed 01-02-PLAN.md
+last_updated: "2026-03-09T13:47:39Z"
+last_activity: 2026-03-09 -- Completed command flags and error interceptor plan
 progress:
   total_phases: 2
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 2
-  completed_plans: 1
-  percent: 25
+  completed_plans: 2
+  percent: 50
 ---
 
 # Project State
@@ -25,25 +25,25 @@ See: .planning/PROJECT.md (updated 2026-03-09)
 
 ## Current Position
 
-Phase: 1 of 2 (Output Infrastructure)
-Plan: 1 of 2 in current phase
-Status: Executing
-Last activity: 2026-03-09 -- Completed output helpers plan
+Phase: 1 of 2 (Output Infrastructure) -- COMPLETE
+Plan: 2 of 2 in current phase
+Status: Phase 1 Complete
+Last activity: 2026-03-09 -- Completed command flags and error interceptor plan
 
-Progress: [##........] 25%
+Progress: [#####.....] 50%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 1
+- Total plans completed: 2
 - Average duration: 2 min
-- Total execution time: 0.03 hours
+- Total execution time: 0.07 hours
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| 01-output-infrastructure | 1/2 | 2 min | 2 min |
+| 01-output-infrastructure | 2/2 | 4 min | 2 min |
 
 **Recent Trend:**
 - Last 5 plans: -
@@ -60,6 +60,9 @@ Recent decisions affecting current work:
 
 - Used reflect to detect nil slices and replace with empty slices for [] output
 - ErrorJSON uses errors.As to unwrap controlplane.APIError from wrapped errors
+- Set SilenceErrors/SilenceUsage globally on rootCmd to prevent Cobra text mixing with JSON
+- isJSONOutput() checks flag.Changed not flag.Value to avoid false triggers
+- Added explicit error printing for non-JSON path since SilenceErrors suppresses Cobra default
 
 ### Pending Todos
 
@@ -67,11 +70,11 @@ None yet.
 
 ### Blockers/Concerns
 
-- Research notes that `actions do --json` flag collision referenced in PITFALLS.md may not exist (no `do` command found in codebase). Verify during Phase 1 planning.
 - `spawn --json` and `session <ID> --json` are v2 (TUI bypass needed). Not blocking v1.
+- Flag collision resolved: `do --json` renamed to `do --body` in Plan 01-02.
 
 ## Session Continuity
 
-Last session: 2026-03-09T13:43:30Z
-Stopped at: Completed 01-01-PLAN.md
-Resume file: .planning/phases/01-output-infrastructure/01-02-PLAN.md
+Last session: 2026-03-09T13:47:39Z
+Stopped at: Completed 01-02-PLAN.md
+Resume file: .planning/phases/02-command-json/02-01-PLAN.md

@@ -12,7 +12,7 @@ This milestone adds structured JSON output to the AP CLI so that AI agents and s
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Output Infrastructure** - Shared JSON output helpers, error handling, and compatibility guardrails
+- [x] **Phase 1: Output Infrastructure** - Shared JSON output helpers, error handling, and compatibility guardrails
 - [ ] **Phase 2: Command JSON Output** - Wire `--json` flag into all target commands
 
 ## Phase Details
@@ -30,8 +30,8 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Plans**: 2 plans
 
 Plans:
-- [ ] 01-01-PLAN.md -- Create internal/output package (JSON helpers + error formatting)
-- [ ] 01-02-PLAN.md -- Wire --json flag, Execute() error interceptor, --body rename
+- [x] 01-01-PLAN.md -- Create internal/output package (JSON helpers + error formatting)
+- [x] 01-02-PLAN.md -- Wire --json flag, Execute() error interceptor, --body rename
 
 ### Phase 2: Command JSON Output
 **Goal**: Every target command produces correct, complete structured JSON when invoked with `--json`, making the CLI fully usable by AI agents and automation scripts
@@ -55,5 +55,5 @@ Phases execute in numeric order: 1 -> 2
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Output Infrastructure | 1/2 | In Progress|  |
+| 1. Output Infrastructure | 2/2 | Complete | 2026-03-09 |
 | 2. Command JSON Output | 0/0 | Not started | - |
