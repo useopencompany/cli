@@ -57,6 +57,34 @@ func TestResolvedVersionFallsBackToVCSRevision(t *testing.T) {
 	}
 }
 
+func TestJSONFlagRegistered(t *testing.T) {
+	f := rootCmd.PersistentFlags().Lookup("json")
+	if f == nil {
+		t.Fatal("expected --json persistent flag to be registered on rootCmd")
+	}
+	if f.DefValue != "false" {
+		t.Fatalf("expected --json default to be \"false\", got %q", f.DefValue)
+	}
+}
+
+func TestIsJSONOutputDefaultFalse(t *testing.T) {
+	if isJSONOutput() {
+		t.Fatal("expected isJSONOutput() to return false by default")
+	}
+}
+
+func TestSilenceErrorsSet(t *testing.T) {
+	if !rootCmd.SilenceErrors {
+		t.Fatal("expected rootCmd.SilenceErrors to be true")
+	}
+}
+
+func TestSilenceUsageSet(t *testing.T) {
+	if !rootCmd.SilenceUsage {
+		t.Fatal("expected rootCmd.SilenceUsage to be true")
+	}
+}
+
 func TestResolvedVersionPrefersInjectedVersion(t *testing.T) {
 	originalVersion := version
 	originalReadBuildInfo := readBuildInfo
