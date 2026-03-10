@@ -115,6 +115,10 @@ func init() {
 	rootCmd.AddCommand(authCmd)
 }
 
+func personalDisplayNamePromptLabel() string {
+	return "What should we call you"
+}
+
 func ensureNamedPersonalWorkspace(ctx context.Context, cfg *config.Config, token *auth.Token) (*auth.Token, error) {
 	if token == nil {
 		return nil, fmt.Errorf("missing token")
@@ -122,7 +126,7 @@ func ensureNamedPersonalWorkspace(ctx context.Context, cfg *config.Config, token
 	if token.OrganizationID() != "" {
 		info := currentOrgInfo(ctx, cfg, token)
 		if strings.TrimSpace(info.UserDisplayName) == "" && shouldPromptForDisplayName(info.OrgName, info.OrgID) {
-			displayName, err := promptForName("What should we call your personal Workspace")
+			displayName, err := promptForName(personalDisplayNamePromptLabel())
 			if err != nil {
 				return nil, fmt.Errorf("reading display name: %w", err)
 			}
@@ -143,7 +147,7 @@ func ensureNamedPersonalWorkspace(ctx context.Context, cfg *config.Config, token
 		return token, nil
 	}
 
-	displayName, err := promptForName("What should we call your personal Workspace")
+	displayName, err := promptForName(personalDisplayNamePromptLabel())
 	if err != nil {
 		return nil, fmt.Errorf("reading display name: %w", err)
 	}
