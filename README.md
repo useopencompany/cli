@@ -7,5 +7,8 @@
 - `cmd/` is the Cobra command tree.
 - `internal/tui/` contains the Bubble Tea flows for spawn, resume, and API key setup.
 - `internal/controlplane/` is the typed client for the Go control plane API.
-- Local state lives in `~/.config/ap/config.json` and `~/.config/ap/credentials.json`.
+- Local state lives in the OS config directory for `ap`:
+  macOS `~/Library/Application Support/ap/`
+  Linux `~/.config/ap/`
+- Production auth and control-plane defaults are built into the CLI. Use environment variables to point a build at non-production services.
 - Build with `make build`, install with `make install`, and run tests with `go test ./...`.

@@ -122,7 +122,7 @@ func EnsureValid(cfg *config.Config) (*Token, error) {
 	return refreshed, nil
 }
 
-// SaveToken persists the token to ~/.config/ap/credentials.json.
+// SaveToken persists the token in the OS-specific ap config directory.
 func SaveToken(t *Token) error {
 	dir, err := config.Dir()
 	if err != nil {

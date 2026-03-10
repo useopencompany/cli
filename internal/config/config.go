@@ -33,7 +33,7 @@ type Config struct {
 	DashboardBaseURL    string `json:"dashboard_base_url,omitempty"`
 }
 
-// Dir returns the config directory path (~/.config/ap/).
+// Dir returns the OS-specific config directory path for ap.
 func Dir() (string, error) {
 	base, err := os.UserConfigDir()
 	if err != nil {
@@ -48,19 +48,22 @@ func Dir() (string, error) {
 	return dir, nil
 }
 
-// Load reads the config from disk. Missing values are populated from
-// environment variables, then from compiled-in defaults.
+// Load returns the runtime configuration for the CLI.
+//
+// Production connectivity/auth settings always default to the compiled-in
+// production values. They may only be overridden via environment variables.
+// Persisted config.json values are intentionally ignored here so a stale local
+// file cannot pin production installs to a dev control plane.
 func Load() (*Config, error) {
-	dir, err := Dir()
-	if err != nil {
+	if _, err := Dir(); err != nil {
 		return nil, err
 	}
 
-	cfg := &Config{}
-	path := filepath.Join(dir, configFile)
-	data, err := os.ReadFile(path)
-	if err == nil {
-		_ = json.Unmarshal(data, cfg) // best-effort; fall through to defaults
+	cfg := &Config{
+		WorkOSClientID:      DefaultWorkOSClientID,
+		WorkOSAuthDomain:    DefaultWorkOSAuthDomain,
+		ControlPlaneBaseURL: DefaultControlPlaneBaseURL,
+		DashboardBaseURL:    DefaultDashboardBaseURL,
 	}
 
 	applyEnvOverride(&cfg.WorkOSClientID, "AP_WORKOS_CLIENT_ID", DefaultWorkOSClientID)
