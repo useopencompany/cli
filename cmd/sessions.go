@@ -18,7 +18,7 @@ import (
 
 var sessionsCmd = &cobra.Command{
 	Use:   "sessions",
-	Short: "List operator sessions",
+	Short: "List sessions",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg, err := config.Load()
 		if err != nil {
@@ -53,7 +53,7 @@ var sessionsCmd = &cobra.Command{
 
 var sessionCmd = &cobra.Command{
 	Use:   "session <ID>",
-	Short: "Open an existing operator session",
+	Short: "Open an existing session",
 	Args:  validateSessionArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg, err := config.Load()
@@ -70,13 +70,12 @@ var sessionCmd = &cobra.Command{
 		if err != nil {
 			return sessionLookupError(cmd, args[0], err)
 		}
-		docsURL := apKeyVaultDocsURL(cfg)
 		workspace := token.WorkspaceName()
 		if info, infoErr := fetchNamedOrgInfo(cmd.Context(), client); infoErr == nil {
 			workspace = namedContextLabel(info, workspace)
 		}
 
-		m := spawn.NewResumeModel(workspace, client, session.ID, messages, docsURL, session.AgentID, session.AgentVersion)
+		m := spawn.NewResumeModel(workspace, client, session.ID, messages)
 		p := tea.NewProgram(m, tea.WithAltScreen())
 		if _, err := p.Run(); err != nil {
 			return fmt.Errorf("TUI error: %w", err)

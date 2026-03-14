@@ -13,13 +13,13 @@ import (
 
 var authCmd = &cobra.Command{
 	Use:   "auth",
-	Short: "Authenticate with Agent Protocol",
+	Short: "Authenticate with Agent Platform",
 	Long:  "Manage authentication. Use 'ap auth login' to sign in via WorkOS AuthKit.",
 }
 
 var authLoginCmd = &cobra.Command{
 	Use:   "login",
-	Short: "Sign in to Agent Protocol",
+	Short: "Sign in to Agent Platform",
 	Long:  "Opens your browser to authenticate via WorkOS AuthKit using the device authorization flow.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg, err := config.Load()
@@ -62,7 +62,7 @@ var authLoginCmd = &cobra.Command{
 
 var authLogoutCmd = &cobra.Command{
 	Use:   "logout",
-	Short: "Sign out of Agent Protocol",
+	Short: "Sign out of Agent Platform",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := auth.ClearToken(); err != nil {
 			return fmt.Errorf("clearing credentials: %w", err)

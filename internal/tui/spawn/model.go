@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -12,20 +11,17 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"go.agentprotocol.cloud/cli/internal/controlplane"
-	"go.agentprotocol.cloud/cli/internal/tui/apikey"
 )
 
 // phase tracks where we are in the spawn lifecycle.
 type phase int
 
 const (
-	phaseAPIKeyCheck phase = iota
-	phaseAPIKeySetup
-	phaseProvisionRuntime
+	phaseProvisionRuntime phase = iota
 	phaseOperator
 )
 
-// Message represents a single operator message.
+// Message represents a single session message.
 type Message struct {
 	ID      string
 	Role    string
@@ -34,25 +30,21 @@ type Message struct {
 
 // Model is the top-level TUI model for the spawn command.
 type Model struct {
-	workspace       string
-	phase           phase
-	width           int
-	height          int
-	keyVaultDocsURL string
-	agentID         string
-	agentVersion    string
+	workspace string
+	phase     phase
+	width     int
+	height    int
 
 	api                 *controlplane.Client
 	sessionID           string
-	activeTurnID        string
-	apiKey              string
-	pendingRetryContent string
-	awaitingRecoveryKey bool
+	activeRunID         string
+	lastRunSequence     int
+	runEvents           <-chan controlplane.RunEvent
+	runErrors           <-chan error
+	streamCancel        context.CancelFunc
+	streamingMessageID  string
 
-	// API key setup sub-model.
-	apiKeyModel apikey.Model
-
-	// Operator state.
+	// Session state.
 	messages   []Message
 	viewport   viewport.Model
 	input      textarea.Model
@@ -60,21 +52,21 @@ type Model struct {
 	submitting bool
 }
 
-// NewModel creates a spawn TUI for creating a new operator session.
-func NewModel(workspace string, client *controlplane.Client, keyVaultDocsURL, agentID string) Model {
-	return newModel(workspace, client, "", nil, keyVaultDocsURL, agentID, "")
+// NewModel creates a spawn TUI for creating a new session.
+func NewModel(workspace string, client *controlplane.Client) Model {
+	return newModel(workspace, client, "", nil)
 }
 
-// NewResumeModel creates a spawn TUI for an existing operator session.
-func NewResumeModel(workspace string, client *controlplane.Client, sessionID string, history []controlplane.Message, keyVaultDocsURL, agentID, agentVersion string) Model {
+// NewResumeModel creates a spawn TUI for an existing session.
+func NewResumeModel(workspace string, client *controlplane.Client, sessionID string, history []controlplane.Message) Model {
 	messages := make([]Message, 0, len(history))
 	for _, msg := range history {
 		messages = append(messages, Message{ID: msg.ID, Role: msg.Role, Content: msg.Content})
 	}
-	return newModel(workspace, client, sessionID, messages, keyVaultDocsURL, agentID, agentVersion)
+	return newModel(workspace, client, sessionID, messages)
 }
 
-func newModel(workspace string, client *controlplane.Client, sessionID string, messages []Message, keyVaultDocsURL, agentID, agentVersion string) Model {
+func newModel(workspace string, client *controlplane.Client, sessionID string, messages []Message) Model {
 	ta := textarea.New()
 	ta.Placeholder = "Type your message..."
 	ta.Prompt = "│ "
@@ -87,36 +79,25 @@ func newModel(workspace string, client *controlplane.Client, sessionID string, m
 
 	vp := viewport.New(80, 20)
 
-	startPhase := phaseAPIKeyCheck
-	apiKey := ""
-	if envKey := os.Getenv("ANTHROPIC_API_KEY"); envKey != "" {
-		apiKey = envKey
-	}
+	startPhase := phaseProvisionRuntime
 	if sessionID != "" {
 		startPhase = phaseOperator
 	}
 
 	return Model{
-		workspace:       workspace,
-		phase:           startPhase,
-		keyVaultDocsURL: keyVaultDocsURL,
-		agentID:         strings.TrimSpace(agentID),
-		agentVersion:    strings.TrimSpace(agentVersion),
-		api:             client,
-		sessionID:       sessionID,
-		apiKey:          apiKey,
-		apiKeyModel:     apikey.NewModel(keyVaultDocsURL),
-		messages:        messages,
-		viewport:        vp,
-		input:           ta,
+		workspace: workspace,
+		phase:     startPhase,
+		api:       client,
+		sessionID: sessionID,
+		messages:  messages,
+		viewport:  vp,
+		input:     ta,
 	}
 }
 
 // Init implements tea.Model.
 func (m Model) Init() tea.Cmd {
 	switch m.phase {
-	case phaseAPIKeyCheck:
-		return m.createSessionCmd()
 	case phaseProvisionRuntime:
 		return m.createSessionCmd()
 	case phaseOperator:
@@ -126,16 +107,12 @@ func (m Model) Init() tea.Cmd {
 	}
 }
 
-type apiKeyMissingMsg struct{}
 type sessionCreatedMsg struct{ session *controlplane.Session }
-type sessionReadyMsg struct{}
 type sessionErrorMsg struct{ err error }
-type turnCreatedMsg struct{ resp *controlplane.TurnResponse }
-type turnPolledMsg struct{ resp *controlplane.TurnResponse }
-type pollTurnMsg struct{ turnID string }
-type turnDoneMsg struct{ content string }
-type turnErrorMsg struct{ err error }
-type apiKeyVaultSavedMsg struct{ err error }
+type runCreatedMsg struct{ run *controlplane.Run }
+type runEventMsg struct{ event controlplane.RunEvent }
+type runStreamClosedMsg struct{}
+type runErrorMsg struct{ err error }
 
 // Update implements tea.Model.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -158,136 +135,78 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.viewport.Width = m.width
 		m.viewport.Height = operatorHeight
 		m.input.SetWidth(m.width - 2)
-		m.apiKeyModel.SetWidth(m.width)
 		return m, nil
-
-	case apiKeyMissingMsg:
-		m.phase = phaseAPIKeySetup
-		m.apiKeyModel = apikey.NewModel(m.keyVaultDocsURL)
-		return m, m.apiKeyModel.Init()
-
-	case apikey.DoneMsg:
-		if msg.Key != "" {
-			m.apiKey = msg.Key
-		}
-		return m, m.saveAPIKeyToVaultCmd()
-
-	case apiKeyVaultSavedMsg:
-		if msg.err != nil {
-			m.phase = phaseAPIKeySetup
-			m.apiKeyModel = apikey.NewStorageModel(m.apiKey, m.keyVaultDocsURL, msg.err.Error())
-			return m, nil
-		}
-		return m.advanceAfterAPIKeyReady()
 
 	case sessionCreatedMsg:
 		if msg.session != nil {
 			m.sessionID = msg.session.ID
-			if strings.TrimSpace(msg.session.AgentID) != "" {
-				m.agentID = strings.TrimSpace(msg.session.AgentID)
-			}
-			if strings.TrimSpace(msg.session.AgentVersion) != "" {
-				m.agentVersion = strings.TrimSpace(msg.session.AgentVersion)
-			}
 		}
 		m.phase = phaseOperator
-		readyMsg := "Operator is online."
-		if strings.TrimSpace(m.agentID) != "" {
-			readyMsg = m.agentID + " is online."
-		}
+		readyMsg := "Session is online."
 		m.messages = append(m.messages, Message{Role: "system", Content: readyMsg})
 		m.viewport.SetContent(m.renderMessages())
 		m.viewport.GotoBottom()
 		return m, textarea.Blink
 
 	case sessionErrorMsg:
-		m.err = friendlySessionError(msg.err)
+		m.err = msg.err
 		return m, nil
 
-	case turnDoneMsg:
-		m.submitting = false
-		m.activeTurnID = ""
-		m.pendingRetryContent = ""
-		m.messages = append(m.messages, Message{Role: "assistant", Content: msg.content})
+	case runCreatedMsg:
+		if msg.run == nil {
+			return m, nil
+		}
+		m.activeRunID = msg.run.ID
+		m.lastRunSequence = 0
+		if m.streamCancel != nil {
+			m.streamCancel()
+		}
+		streamCtx, cancel := context.WithCancel(context.Background())
+		m.streamCancel = cancel
+		m.runEvents, m.runErrors = m.api.StreamRunEvents(streamCtx, msg.run.ID, 0)
+		return m, waitForRunEventCmd(m.runEvents, m.runErrors)
+
+	case runEventMsg:
+		if msg.event.RunID == "" || msg.event.RunID != m.activeRunID {
+			return m, nil
+		}
+		if msg.event.SequenceNumber > m.lastRunSequence {
+			m.lastRunSequence = msg.event.SequenceNumber
+		}
+		m.applyRunEvent(msg.event)
 		m.viewport.SetContent(m.renderMessages())
 		m.viewport.GotoBottom()
+		if isTerminalRunEvent(msg.event.Type) {
+			m.submitting = false
+			m.activeRunID = ""
+			m.streamingMessageID = ""
+			if m.streamCancel != nil {
+				m.streamCancel()
+				m.streamCancel = nil
+			}
+			return m, nil
+		}
+		return m, waitForRunEventCmd(m.runEvents, m.runErrors)
+
+	case runStreamClosedMsg:
 		return m, nil
 
-	case turnCreatedMsg:
-		m.activeTurnID = msg.resp.TurnID
-		m.mergeMessages(msg.resp.Messages)
-		m.viewport.SetContent(m.renderMessages())
-		m.viewport.GotoBottom()
-		return m, m.scheduleTurnPollCmd(msg.resp.TurnID)
-
-	case pollTurnMsg:
-		if msg.turnID == "" || msg.turnID != m.activeTurnID {
-			return m, nil
-		}
-		return m, m.fetchTurnCmd(msg.turnID)
-
-	case turnPolledMsg:
-		m.mergeMessages(msg.resp.Messages)
-		m.viewport.SetContent(m.renderMessages())
-		m.viewport.GotoBottom()
-		switch msg.resp.Status {
-		case "completed":
-			m.submitting = false
-			m.activeTurnID = ""
-			m.pendingRetryContent = ""
-			return m, nil
-		case "failed":
-			m.submitting = false
-			m.activeTurnID = ""
-			if msg.resp.Code == "MODEL_CREDENTIAL_REQUIRED" {
-				m.awaitingRecoveryKey = true
-				if strings.TrimSpace(m.apiKey) != "" {
-					return m, m.saveAPIKeyToVaultCmd()
-				}
-				m.phase = phaseAPIKeySetup
-				m.apiKeyModel = apikey.NewModel(m.keyVaultDocsURL)
-				m.messages = append(m.messages, Message{Role: "system", Content: "This session needs an Anthropic API key saved in the ap vault."})
-				m.viewport.SetContent(m.renderMessages())
-				m.viewport.GotoBottom()
-				return m, m.apiKeyModel.Init()
-			}
-			m.err = errors.New(msg.resp.Error)
-			m.messages = append(m.messages, Message{Role: "system", Content: "Turn failed: " + msg.resp.Error})
-			m.viewport.SetContent(m.renderMessages())
-			m.viewport.GotoBottom()
-			return m, nil
-		default:
-			return m, m.scheduleTurnPollCmd(msg.resp.TurnID)
-		}
-
-	case turnErrorMsg:
+	case runErrorMsg:
 		m.submitting = false
-		m.activeTurnID = ""
-		if apiErr, ok := asAPIError(msg.err); ok && apiErr.Code == "MODEL_CREDENTIAL_REQUIRED" {
-			m.awaitingRecoveryKey = true
-			if strings.TrimSpace(m.apiKey) != "" {
-				return m, m.saveAPIKeyToVaultCmd()
-			}
-			m.phase = phaseAPIKeySetup
-			m.apiKeyModel = apikey.NewModel(m.keyVaultDocsURL)
-			m.messages = append(m.messages, Message{Role: "system", Content: "This session needs an Anthropic API key saved in the ap vault."})
-			m.viewport.SetContent(m.renderMessages())
-			m.viewport.GotoBottom()
-			return m, m.apiKeyModel.Init()
+		m.activeRunID = ""
+		m.streamingMessageID = ""
+		if m.streamCancel != nil {
+			m.streamCancel()
+			m.streamCancel = nil
 		}
 		m.err = msg.err
-		m.messages = append(m.messages, Message{Role: "system", Content: "Turn failed: " + msg.err.Error()})
+		m.messages = append(m.messages, Message{Role: "system", Content: "Run failed: " + msg.err.Error()})
 		m.viewport.SetContent(m.renderMessages())
 		m.viewport.GotoBottom()
 		return m, nil
 	}
 
 	switch m.phase {
-	case phaseAPIKeySetup:
-		updated, cmd := m.apiKeyModel.Update(msg)
-		m.apiKeyModel = updated.(apikey.Model)
-		return m, cmd
-
 	case phaseOperator:
 		return m.updateOperator(msg)
 	}
@@ -312,7 +231,6 @@ func (m Model) updateOperator(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.messages = append(m.messages, Message{Role: "user", Content: text})
 			m.input.Reset()
 			m.submitting = true
-			m.pendingRetryContent = text
 			m.viewport.SetContent(m.renderMessages())
 			m.viewport.GotoBottom()
 			return m, m.submitTurnCmd(text)
@@ -329,32 +247,15 @@ func (m Model) updateOperator(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
-func (m Model) advanceAfterAPIKeyReady() (tea.Model, tea.Cmd) {
-	if m.awaitingRecoveryKey && m.sessionID != "" {
-		m.awaitingRecoveryKey = false
-		m.phase = phaseOperator
-		content := strings.TrimSpace(m.pendingRetryContent)
-		if content != "" {
-			return m, m.submitTurnCmd(content)
-		}
-		return m, nil
-	}
-	m.phase = phaseProvisionRuntime
-	return m, m.createSessionCmd()
-}
-
 func (m Model) createSessionCmd() tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
 
 		sess, err := m.api.CreateSession(ctx, controlplane.CreateSessionRequest{
-			AgentID: strings.TrimSpace(m.agentID),
+			Source: "cli",
 		})
 		if err != nil {
-			if isKeyVaultPromptError(err) {
-				return apiKeyMissingMsg{}
-			}
 			return sessionErrorMsg{err: err}
 		}
 		return sessionCreatedMsg{session: sess}
@@ -367,48 +268,30 @@ func (m Model) submitTurnCmd(content string) tea.Cmd {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 		defer cancel()
 
-		wait := false
-		resp, err := m.api.CreateTurn(ctx, sessionID, controlplane.CreateTurnRequest{
+		resp, err := m.api.CreateRun(ctx, sessionID, controlplane.CreateRunRequest{
 			Content: content,
-			Wait:    &wait,
 		})
 		if err != nil {
-			return turnErrorMsg{err: err}
+			return runErrorMsg{err: err}
 		}
-		return turnCreatedMsg{resp: resp}
+		return runCreatedMsg{run: resp}
 	}
 }
 
-func (m Model) saveAPIKeyToVaultCmd() tea.Cmd {
-	key := strings.TrimSpace(m.apiKey)
+func waitForRunEventCmd(events <-chan controlplane.RunEvent, errs <-chan error) tea.Cmd {
 	return func() tea.Msg {
-		if key == "" {
-			return apiKeyVaultSavedMsg{err: fmt.Errorf("missing ANTHROPIC_API_KEY")}
+		select {
+		case event, ok := <-events:
+			if !ok {
+				return runStreamClosedMsg{}
+			}
+			return runEventMsg{event: event}
+		case err, ok := <-errs:
+			if !ok || err == nil {
+				return runStreamClosedMsg{}
+			}
+			return runErrorMsg{err: err}
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-
-		return apiKeyVaultSavedMsg{err: m.api.SaveAnthropicKeyToVault(ctx, key)}
-	}
-}
-
-func (m Model) scheduleTurnPollCmd(turnID string) tea.Cmd {
-	return tea.Tick(350*time.Millisecond, func(time.Time) tea.Msg {
-		return pollTurnMsg{turnID: turnID}
-	})
-}
-
-func (m Model) fetchTurnCmd(turnID string) tea.Cmd {
-	sessionID := m.sessionID
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-
-		resp, err := m.api.GetTurn(ctx, sessionID, turnID)
-		if err != nil {
-			return turnErrorMsg{err: err}
-		}
-		return turnPolledMsg{resp: resp}
 	}
 }
 
@@ -432,11 +315,8 @@ func (m Model) View() string {
 	b.WriteString("\n")
 
 	switch m.phase {
-	case phaseAPIKeySetup:
-		b.WriteString(m.apiKeyModel.View())
-
 	case phaseProvisionRuntime:
-		b.WriteString(systemMsgStyle.Render("\n  Starting operator session..."))
+		b.WriteString(systemMsgStyle.Render("\n  Starting session..."))
 		if m.err != nil {
 			b.WriteString("\n\n")
 			b.WriteString(systemMsgStyle.Render("  Error: " + m.err.Error()))
@@ -452,7 +332,7 @@ func (m Model) View() string {
 		b.WriteString("\n")
 		help := " enter: send • ctrl+c: quit"
 		if m.submitting {
-			help = " waiting for operator response... • ctrl+c: quit"
+			help = " waiting for session response... • ctrl+c: quit"
 		}
 		b.WriteString(helpStyle.Render(help))
 		if m.err != nil {
@@ -461,7 +341,7 @@ func (m Model) View() string {
 		}
 
 	default:
-		b.WriteString("\n  Starting operator session...")
+		b.WriteString("\n  Starting session...")
 		if m.err != nil {
 			b.WriteString("\n\n")
 			b.WriteString(systemMsgStyle.Render("  Error: " + m.err.Error()))
@@ -480,40 +360,21 @@ func asAPIError(err error) (*controlplane.APIError, bool) {
 }
 
 func (m Model) modeLabel() string {
-	if strings.TrimSpace(m.agentID) == "" {
-		return "operator"
-	}
-	if strings.TrimSpace(m.agentVersion) == "" {
-		return "agent: " + m.agentID
-	}
-	return "agent: " + m.agentID + "@" + m.agentVersion
+	return "session"
 }
 
-func isKeyVaultPromptError(err error) bool {
-	apiErr, ok := asAPIError(err)
-	if !ok {
+func isTerminalRunEvent(eventType string) bool {
+	switch eventType {
+	case "run.completed", "run.failed", "run.cancelled":
+		return true
+	default:
 		return false
 	}
-	return apiErr.Code == "KEY_VAULT_EMPTY" || apiErr.Code == "KEY_VAULT_INVALID" || apiErr.Code == "MODEL_CREDENTIAL_REQUIRED"
-}
-
-func friendlySessionError(err error) error {
-	apiErr, ok := asAPIError(err)
-	if !ok {
-		return err
-	}
-	switch apiErr.Code {
-	case "AGENT_NOT_INSTALLED", "AGENT_VERSION_MISMATCH", "AGENT_NOT_READY":
-		if strings.TrimSpace(apiErr.Msg) != "" {
-			return errors.New(apiErr.Msg)
-		}
-	}
-	return err
 }
 
 func (m Model) renderMessages() string {
 	if len(m.messages) == 0 {
-		return systemMsgStyle.Render("\n  Start an operator conversation. Type a message and press Enter.\n")
+		return systemMsgStyle.Render("\n  Start a session. Type a message and press Enter.\n")
 	}
 
 	var b strings.Builder
@@ -556,5 +417,79 @@ func (m *Model) mergeMessages(incoming []controlplane.Message) {
 				Content: msg.Content,
 			})
 		}
+	}
+}
+
+func (m *Model) applyRunEvent(event controlplane.RunEvent) {
+	switch event.Type {
+	case "run.created":
+		m.messages = append(m.messages, Message{ID: event.ID, Role: "system", Content: "Run queued."})
+	case "run.started":
+		m.messages = append(m.messages, Message{ID: event.ID, Role: "system", Content: "Run started."})
+	case "reasoning.summary.delta":
+		if delta, ok := event.Data["delta"].(string); ok && strings.TrimSpace(delta) != "" {
+			m.messages = append(m.messages, Message{ID: event.ID, Role: "tool", Content: delta})
+		}
+	case "tool_call.started":
+		if name, ok := event.Data["name"].(string); ok && strings.TrimSpace(name) != "" {
+			m.messages = append(m.messages, Message{ID: event.ID, Role: "tool", Content: "Tool started: " + name})
+		}
+	case "tool_call.completed":
+		if name, ok := event.Data["name"].(string); ok && strings.TrimSpace(name) != "" {
+			m.messages = append(m.messages, Message{ID: event.ID, Role: "tool", Content: "Tool completed: " + name})
+		}
+	case "tool_call.failed":
+		name, _ := event.Data["name"].(string)
+		errText, _ := event.Data["error"].(string)
+		content := "Tool failed"
+		if strings.TrimSpace(name) != "" {
+			content = "Tool failed: " + name
+		}
+		if strings.TrimSpace(errText) != "" {
+			content += " (" + errText + ")"
+		}
+		m.messages = append(m.messages, Message{ID: event.ID, Role: "tool", Content: content})
+	case "message.output.delta":
+		delta, _ := event.Data["delta"].(string)
+		if strings.TrimSpace(delta) == "" {
+			return
+		}
+		if m.streamingMessageID == "" {
+			m.streamingMessageID = event.ID
+			m.messages = append(m.messages, Message{ID: event.ID, Role: "assistant", Content: delta})
+			return
+		}
+		for i := range m.messages {
+			if m.messages[i].ID == m.streamingMessageID {
+				m.messages[i].Content += delta
+				return
+			}
+		}
+		m.messages = append(m.messages, Message{ID: m.streamingMessageID, Role: "assistant", Content: delta})
+	case "message.output.completed":
+		if text, ok := event.Data["text"].(string); ok && strings.TrimSpace(text) != "" {
+			if m.streamingMessageID != "" {
+				for i := range m.messages {
+					if m.messages[i].ID == m.streamingMessageID {
+						m.messages[i].Content = text
+						break
+					}
+				}
+			} else {
+				m.messages = append(m.messages, Message{ID: event.ID, Role: "assistant", Content: text})
+			}
+		}
+		m.streamingMessageID = ""
+	case "run.completed":
+		m.messages = append(m.messages, Message{ID: event.ID, Role: "system", Content: "Run completed."})
+	case "run.failed":
+		errText, _ := event.Data["error"].(string)
+		if errText == "" {
+			errText = "run failed"
+		}
+		m.err = errors.New(errText)
+		m.messages = append(m.messages, Message{ID: event.ID, Role: "system", Content: "Run failed: " + errText})
+	case "run.cancelled":
+		m.messages = append(m.messages, Message{ID: event.ID, Role: "system", Content: "Run cancelled."})
 	}
 }

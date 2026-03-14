@@ -19,8 +19,8 @@ var (
 
 var rootCmd = &cobra.Command{
 	Use:   "ap",
-	Short: "Agent Protocol CLI",
-	Long:  "ap is the command-line interface for Agent Protocol.",
+	Short: "Agent Platform CLI",
+	Long:  "ap is the command-line interface for Agent Platform.",
 	CompletionOptions: cobra.CompletionOptions{
 		HiddenDefaultCmd: true,
 	},

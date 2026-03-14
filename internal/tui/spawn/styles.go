@@ -20,7 +20,7 @@ var (
 			Foreground(lipgloss.Color("99")). // Purple.
 			Bold(true)
 
-	// Operator area styles.
+	// Session area styles.
 	userMsgStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("252"))
 
