@@ -92,7 +92,7 @@ var doCmd = &cobra.Command{
 		input := map[string]any{}
 		if strings.TrimSpace(doJSONInput) != "" {
 			if err := json.Unmarshal([]byte(doJSONInput), &input); err != nil {
-				return fmt.Errorf("parsing --json payload: %w", err)
+				return fmt.Errorf("parsing --body payload: %w", err)
 			}
 		}
 		pairs, err := parseInputPairs(doInputs)
@@ -189,7 +189,7 @@ func init() {
 	doCmd.Flags().StringVar(&doConnectionID, "connection", "", "Explicit connection ID override")
 	doCmd.Flags().StringVar(&doSessionID, "session", "", "Optional session ID for audit linking")
 	doCmd.Flags().StringArrayVar(&doInputs, "input", nil, "Action input key=value (repeatable)")
-	doCmd.Flags().StringVar(&doJSONInput, "json", "", "Action input JSON object")
+	doCmd.Flags().StringVar(&doJSONInput, "body", "", "Action input as JSON object")
 
 	rootCmd.AddCommand(actionsCmd)
 	rootCmd.AddCommand(findCmd)
