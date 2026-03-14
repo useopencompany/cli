@@ -1,13 +1,14 @@
 package controlplane
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 )
@@ -45,13 +46,11 @@ func (e *APIError) Error() string {
 }
 
 type Session struct {
-	ID           string    `json:"id"`
-	Status       string    `json:"status"`
-	Title        string    `json:"title"`
-	AgentID      string    `json:"agent_id"`
-	AgentVersion string    `json:"agent_version"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID        string    `json:"id"`
+	Status    string    `json:"status"`
+	Title     string    `json:"title"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 type Message struct {
@@ -63,13 +62,17 @@ type Message struct {
 }
 
 type CreateSessionRequest struct {
-	Title   string `json:"title,omitempty"`
-	AgentID string `json:"agent_id,omitempty"`
+	Title  string `json:"title,omitempty"`
+	Source string `json:"source,omitempty"`
 }
 
 type CreateTurnRequest struct {
 	Content string `json:"content"`
 	Wait    *bool  `json:"wait,omitempty"`
+}
+
+type CreateRunRequest struct {
+	Content string `json:"content,omitempty"`
 }
 
 type TurnResponse struct {
@@ -79,6 +82,60 @@ type TurnResponse struct {
 	Error            string    `json:"error"`
 	Code             string    `json:"code"`
 	Messages         []Message `json:"messages"`
+}
+
+type RunOutputBlock struct {
+	Type string `json:"type"`
+	Text string `json:"text,omitempty"`
+}
+
+type RunOutputMessage struct {
+	Type    string           `json:"type"`
+	Role    string           `json:"role"`
+	Content []RunOutputBlock `json:"content"`
+}
+
+type ToolCall struct {
+	ID            string         `json:"id"`
+	ToolUseID     string         `json:"tool_use_id,omitempty"`
+	Name          string         `json:"name"`
+	Status        string         `json:"status"`
+	Arguments     map[string]any `json:"arguments,omitempty"`
+	ResultPreview map[string]any `json:"result_preview,omitempty"`
+	Error         string         `json:"error,omitempty"`
+	CreatedAt     time.Time      `json:"created_at"`
+	UpdatedAt     time.Time      `json:"updated_at"`
+}
+
+type Run struct {
+	ID        string             `json:"id"`
+	Object    string             `json:"object"`
+	SessionID string             `json:"session_id"`
+	Status    string             `json:"status"`
+	Source    string             `json:"source,omitempty"`
+	Error     string             `json:"error,omitempty"`
+	CreatedAt time.Time          `json:"created_at"`
+	UpdatedAt time.Time          `json:"updated_at"`
+	Output    []RunOutputMessage `json:"output,omitempty"`
+	ToolCalls []ToolCall         `json:"tool_calls,omitempty"`
+}
+
+type listRunsResponse struct {
+	Runs []Run `json:"runs"`
+}
+
+type RunEvent struct {
+	ID             string         `json:"id"`
+	Type           string         `json:"type"`
+	RunID          string         `json:"run_id"`
+	SessionID      string         `json:"session_id"`
+	SequenceNumber int            `json:"sequence_number"`
+	CreatedAt      time.Time      `json:"created_at"`
+	Data           map[string]any `json:"data"`
+}
+
+type listRunEventsResponse struct {
+	Events []RunEvent `json:"events"`
 }
 
 type listSessionsResponse struct {
@@ -279,51 +336,6 @@ type GrantPermissionRequest struct {
 	Resource    string `json:"resource"`
 }
 
-type AgentReadiness struct {
-	Installed          bool     `json:"installed"`
-	MissingConnections []string `json:"missing_connections"`
-	MissingPermissions []string `json:"missing_permissions"`
-	MissingSkills      []string `json:"missing_skills"`
-}
-
-type AgentAssets struct {
-	Identity       string   `json:"identity"`
-	Bootstrap      string   `json:"bootstrap"`
-	Instructions   []string `json:"instructions"`
-	Knowledge      []string `json:"knowledge"`
-	MemoryTemplate string   `json:"memory_template"`
-}
-
-type Agent struct {
-	ID                   string         `json:"id"`
-	Name                 string         `json:"name"`
-	Version              string         `json:"version"`
-	Description          string         `json:"description"`
-	Category             string         `json:"category"`
-	Tags                 []string       `json:"tags"`
-	Mode                 string         `json:"mode"`
-	Skills               []string       `json:"skills"`
-	RequiredIntegrations []string       `json:"required_integrations"`
-	RecommendedFor       []string       `json:"recommended_for"`
-	Assets               AgentAssets    `json:"assets"`
-	Readiness            AgentReadiness `json:"readiness"`
-	InstallStatus        string         `json:"install_status"`
-	InstalledVersion     string         `json:"installed_version"`
-	BootstrapCompletedAt *time.Time     `json:"bootstrap_completed_at"`
-}
-
-type FindAgentsRequest struct {
-	Query string `json:"query,omitempty"`
-}
-
-type InstallAgentRequest struct {
-	ID string `json:"id"`
-}
-
-type listAgentsResponse struct {
-	Agents []Agent `json:"agents"`
-}
-
 func (c *Client) CreateSession(ctx context.Context, req CreateSessionRequest) (*Session, error) {
 	var out Session
 	if err := c.doJSON(ctx, http.MethodPost, "/v1/operator/sessions", req, &out); err != nil {
@@ -356,18 +368,108 @@ func (c *Client) CreateTurn(ctx context.Context, sessionID string, req CreateTur
 	return &out, nil
 }
 
+func (c *Client) CreateRun(ctx context.Context, sessionID string, req CreateRunRequest) (*Run, error) {
+	var out Run
+	if err := c.doJSON(ctx, http.MethodPost, "/v1/operator/sessions/"+sessionID+"/runs", req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (c *Client) GetRun(ctx context.Context, runID string) (*Run, error) {
+	var out Run
+	if err := c.doJSON(ctx, http.MethodGet, "/v1/operator/runs/"+runID, nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (c *Client) ListRunEvents(ctx context.Context, runID string, startingAfter int) ([]RunEvent, error) {
+	path := "/v1/operator/runs/" + runID + "/events"
+	if startingAfter > 0 {
+		path += "?starting_after=" + fmt.Sprintf("%d", startingAfter)
+	}
+	var out listRunEventsResponse
+	if err := c.doJSON(ctx, http.MethodGet, path, nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Events, nil
+}
+
+func (c *Client) StreamRunEvents(ctx context.Context, runID string, startingAfter int) (<-chan RunEvent, <-chan error) {
+	events := make(chan RunEvent)
+	errs := make(chan error, 1)
+
+	go func() {
+		defer close(events)
+		defer close(errs)
+
+		path := fmt.Sprintf("%s/v1/operator/runs/%s/events?stream=true&starting_after=%d", c.baseURL, runID, startingAfter)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, path, nil)
+		if err != nil {
+			errs <- err
+			return
+		}
+		req.Header.Set("Accept", "text/event-stream")
+		req.Header.Set("Authorization", "Bearer "+c.accessToken)
+
+		resp, err := c.http.Do(req)
+		if err != nil {
+			errs <- err
+			return
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode >= 400 {
+			raw, _ := io.ReadAll(resp.Body)
+			errs <- &APIError{
+				Status: resp.StatusCode,
+				Method: http.MethodGet,
+				Path:   "/v1/operator/runs/" + runID + "/events",
+				Msg:    strings.TrimSpace(string(raw)),
+			}
+			return
+		}
+
+		scanner := bufio.NewScanner(resp.Body)
+		const maxScanTokenSize = 1024 * 1024
+		scanner.Buffer(make([]byte, 0, 64*1024), maxScanTokenSize)
+
+		var dataLines []string
+		for scanner.Scan() {
+			line := scanner.Text()
+			if line == "" {
+				if len(dataLines) > 0 {
+					var event RunEvent
+					if err := json.Unmarshal([]byte(strings.Join(dataLines, "\n")), &event); err == nil {
+						select {
+						case <-ctx.Done():
+							return
+						case events <- event:
+						}
+					}
+					dataLines = dataLines[:0]
+				}
+				continue
+			}
+			if strings.HasPrefix(line, "data: ") {
+				dataLines = append(dataLines, strings.TrimPrefix(line, "data: "))
+			}
+		}
+		if err := scanner.Err(); err != nil && !errors.Is(err, context.Canceled) {
+			errs <- err
+		}
+	}()
+
+	return events, errs
+}
+
 func (c *Client) GetTurn(ctx context.Context, sessionID, turnID string) (*TurnResponse, error) {
 	var out TurnResponse
 	if err := c.doJSON(ctx, http.MethodGet, "/v1/operator/sessions/"+sessionID+"/turns/"+turnID, nil, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
-}
-
-func (c *Client) SaveAnthropicKeyToVault(ctx context.Context, key string) error {
-	return c.doJSON(ctx, http.MethodPut, "/v1/operator/key-vault/anthropic", map[string]string{
-		"anthropic_api_key": key,
-	}, nil)
 }
 
 func (c *Client) WaitForSessionReady(ctx context.Context, sessionID string, timeout time.Duration) (*Session, error) {
@@ -588,39 +690,6 @@ func (c *Client) ListActionInvocations(ctx context.Context, all bool, limit int)
 		return nil, err
 	}
 	return out.Invocations, nil
-}
-
-func (c *Client) ListAgents(ctx context.Context) ([]Agent, error) {
-	var out listAgentsResponse
-	if err := c.doJSON(ctx, http.MethodGet, "/v1/operator/agents", nil, &out); err != nil {
-		return nil, err
-	}
-	return out.Agents, nil
-}
-
-func (c *Client) FindAgents(ctx context.Context, req FindAgentsRequest) ([]Agent, error) {
-	var out listAgentsResponse
-	if err := c.doJSON(ctx, http.MethodPost, "/v1/operator/agents/find", req, &out); err != nil {
-		return nil, err
-	}
-	return out.Agents, nil
-}
-
-func (c *Client) GetAgent(ctx context.Context, id string) (*Agent, error) {
-	var out Agent
-	path := "/v1/operator/agents/" + url.PathEscape(strings.TrimSpace(id))
-	if err := c.doJSON(ctx, http.MethodGet, path, nil, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
-}
-
-func (c *Client) InstallAgent(ctx context.Context, req InstallAgentRequest) (*Agent, error) {
-	var out Agent
-	if err := c.doJSON(ctx, http.MethodPost, "/v1/operator/agents/install", req, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
 }
 
 func (c *Client) doJSON(ctx context.Context, method, path string, reqBody any, respBody any) error {

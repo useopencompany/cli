@@ -13,8 +13,8 @@ import (
 
 var spawnCmd = &cobra.Command{
 	Use:   "spawn",
-	Short: "Launch an operator session",
-	Long:  "Opens an interactive TUI for interacting with Operator.",
+	Short: "Launch an interactive session",
+	Long:  "Opens an interactive TUI for working with a session.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg, err := config.Load()
 		if err != nil {
@@ -32,9 +32,7 @@ var spawnCmd = &cobra.Command{
 		if info, infoErr := fetchNamedOrgInfo(cmd.Context(), client); infoErr == nil {
 			workspace = namedContextLabel(info, workspace)
 		}
-		docsURL := apKeyVaultDocsURL(cfg)
-
-		m := spawn.NewModel(workspace, client, docsURL, spawnAgentID)
+		m := spawn.NewModel(workspace, client)
 		p := tea.NewProgram(m, tea.WithAltScreen())
 
 		if _, err := p.Run(); err != nil {
@@ -45,9 +43,6 @@ var spawnCmd = &cobra.Command{
 	},
 }
 
-var spawnAgentID string
-
 func init() {
-	spawnCmd.Flags().StringVar(&spawnAgentID, "agent", "", "Start the session with an installed interactive agent")
 	rootCmd.AddCommand(spawnCmd)
 }

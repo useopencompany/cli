@@ -25,17 +25,6 @@ func authenticatedClient() (*config.Config, *auth.Token, *controlplane.Client, e
 	return cfg, token, client, nil
 }
 
-func apKeyVaultDocsURL(cfg *config.Config) string {
-	if cfg == nil {
-		return ""
-	}
-	base := strings.TrimRight(strings.TrimSpace(cfg.DashboardBaseURL), "/")
-	if base == "" {
-		return ""
-	}
-	return base + "/docs/architecture"
-}
-
 func promptForName(label string) (string, error) {
 	reader := bufio.NewReader(os.Stdin)
 	for {

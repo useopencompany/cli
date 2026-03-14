@@ -1,6 +1,6 @@
 # Agent Platform CLI
 
-`ap` is the terminal client for Agent Platform. It handles WorkOS sign-in, personal and team workspace context, the Operator TUI, agent installs, and the control-plane surfaces for integrations, permissions, and gateway actions. User-facing docs live at [docs.agentplatform.cloud](https://docs.agentplatform.cloud).
+`ap` is the terminal client for Agent Platform. It handles WorkOS sign-in, personal and team workspace context, the session TUI, and the control-plane surfaces for integrations, permissions, and gateway actions. User-facing docs live at [docs.agentplatform.cloud](https://docs.agentplatform.cloud).
 
 ## Developer Notes
 
